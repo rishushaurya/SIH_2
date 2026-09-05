@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  postgres-revenue:
+    image: postgres:16-alpine
+    container_name: mahalink-postgres-revenue
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: maha_revenue
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata_revenue:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d maha_revenue"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  mysql-rto:
+    image: mysql:8.0
+    container_name: mahalink-mysql-rto
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: maha_rto
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysqldata_rto:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin" ,"ping", "-h", "localhost", "-u", "root", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  mongo-certificates:
+    image: mongo:7.0
+    container_name: mahalink-mongo-certificates
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodata_certs:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata_revenue:
+  mysqldata_rto:
+  mongodata_certs:

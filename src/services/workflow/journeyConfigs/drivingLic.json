@@ -1,0 +1,23 @@
+{
+  "id": "driving_license",
+  "title_en": "Driving License Renewal & Address Update",
+  "title_mr": "चालक परवाना नूतनीकरण व पत्ता बदल",
+  "title_hi": "ड्राइविंग लाइसेंस नवीनीकरण और पता परिवर्तन",
+  "description": "Renewal of motor vehicle driving license with automated residential address verification from Mahabhumi Revenue database.",
+  "category": "Transport & RTO Services",
+  "required_departments": ["rto", "revenue"],
+  "consent_scope": [
+    "rto:driving_license:read",
+    "revenue:residence_address:read"
+  ],
+  "default_validity_minutes": 15,
+  "statutory_basis": "MOTOR_VEHICLES_ACT_1988_SEC_15",
+  "form_fields": [
+    { "key": "applicant_name", "label_en": "License Holder Name", "label_mr": "परवानाधारकाचे नाव", "source": "identity" },
+    { "key": "dl_number", "label_en": "Current DL Number", "label_mr": "चालक परवाना क्रमांक", "source": "rto" },
+    { "key": "vehicle_classes", "label_en": "Authorized Vehicle Classes", "label_mr": "अधिकृत वाहन श्रेणी", "source": "rto" },
+    { "key": "dl_expiry_date", "label_en": "License Expiry Date", "label_mr": "परवाना समाप्ती दिनांक", "source": "rto" },
+    { "key": "residential_district", "label_en": "Verified District", "label_mr": "सत्यापित जिल्हा", "source": "revenue" },
+    { "key": "residential_village", "label_en": "Verified Taluka / Village", "label_mr": "सत्यापित तालुका / गाव", "source": "revenue" }
+  ]
+}

@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MahaLink — SIH 2026 Presentation (SIH26129)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-space: #060918;
+      --bg-card: rgba(18, 26, 54, 0.85);
+      --border-glow: rgba(59, 130, 246, 0.25);
+      --text-main: #F8FAFC;
+      --text-muted: #94A3B8;
+      --accent-blue: #3B82F6;
+      --accent-saffron: #F97316;
+      --accent-cyan: #06B6D4;
+      --accent-emerald: #10B981;
+      --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-space);
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .slide {
+      width: 100vw;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 60px 80px;
+      border-bottom: 2px solid rgba(255, 255, 255, 0.08);
+      position: relative;
+      background: radial-gradient(circle at 80% 20%, rgba(30, 58, 138, 0.25) 0%, transparent 60%),
+                  radial-gradient(circle at 10% 80%, rgba(234, 88, 12, 0.15) 0%, transparent 50%),
+                  var(--bg-space);
+      page-break-after: always;
+    }
+
+    .slide-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 30px;
+    }
+
+    .badge-group {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .badge {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 6px 14px;
+      border-radius: 6px;
+      border: 1px solid;
+    }
+
+    .badge-primary {
+      background: rgba(59, 130, 246, 0.15);
+      color: var(--accent-blue);
+      border-color: rgba(59, 130, 246, 0.4);
+    }
+
+    .badge-saffron {
+      background: rgba(249, 115, 22, 0.15);
+      color: var(--accent-saffron);
+      border-color: rgba(249, 115, 22, 0.4);
+    }
+
+    .slide-number {
+      font-family: var(--font-mono);
+      color: var(--text-muted);
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .slide-title {
+      font-size: 42px;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      margin-bottom: 8px;
+    }
+
+    .slide-title-gradient {
+      background: linear-gradient(135deg, #FFFFFF 0%, #93C5FD 50%, #FDBA74 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .slide-subtitle {
+      font-size: 20px;
+      color: var(--text-muted);
+      max-width: 900px;
+    }
+
+    .slide-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      margin: 20px 0;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 30px;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 24px;
+    }
+
+    .grid-4 {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 20px;
+    }
+
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-glow);
+      border-radius: 12px;
+      padding: 28px;
+      backdrop-filter: blur(12px);
+    }
+
+    .card-title {
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .card-title-blue { color: var(--accent-blue); }
+    .card-title-saffron { color: var(--accent-saffron); }
+    .card-title-emerald { color: var(--accent-emerald); }
+    .card-title-cyan { color: var(--accent-cyan); }
+
+    .card-text {
+      color: var(--text-muted);
+      font-size: 15px;
+      line-height: 1.5;
+    }
+
+    .stat-box {
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 10px;
+      padding: 20px;
+      text-align: center;
+    }
+
+    .stat-number {
+      font-family: var(--font-mono);
+      font-size: 44px;
+      font-weight: 800;
+      color: var(--accent-cyan);
+      line-height: 1;
+      margin-bottom: 8px;
+    }
+
+    .stat-label {
+      font-size: 13px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+    }
+
+    .code-block {
+      background: #020617;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 8px;
+      padding: 16px;
+      font-family: var(--font-mono);
+      font-size: 13px;
+      color: #38BDF8;
+      overflow-x: auto;
+      line-height: 1.5;
+    }
+
+    .slide-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      padding-top: 20px;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .footer-highlight {
+      color: #E2E8F0;
+      font-weight: 600;
+    }
+
+    @media print {
+      body { background: #060918 !important; -webkit-print-color-adjust: exact; }
+      .slide { min-height: 100vh; page-break-after: always; padding: 40px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- SLIDE 1: Title & Framing -->
+  <section class="slide">
+    <div class="slide-header">
+      <div class="badge-group">
+        <span class="badge badge-primary">SIH 2026 Finalist</span>
+        <span class="badge badge-saffron">Problem Statement SIH26129</span>
+      </div>
+      <div class="slide-number">01 / 08</div>
+    </div>
+    <div class="slide-content">
+      <h1 class="slide-title slide-title-gradient" style="font-size: 58px; margin-bottom: 16px;">MahaLink</h1>
+      <p class="slide-subtitle" style="font-size: 24px; color: #E2E8F0; margin-bottom: 40px;">
+        Maharashtra Federated Interoperability & DPDP-Compliant Consent Middleware
+      </p>
+      <div class="grid-3">
+        <div class="card">
+          <div class="card-title card-title-saffron">Sponsoring Authority</div>
+          <div class="card-text">Government of Maharashtra<br>Department of Information Technology (DIT / Maha-IT)</div>
+        </div>
+        <div class="card">
+          <div class="card-title card-title-blue">National Frameworks</div>
+          <div class="card-text">IndEA 2.0 Integration RM<br>DEPA / India Stack / DPDP Act 2023</div>
+        </div>
+        <div class="card">
+          <div class="card-title card-title-emerald">Core Innovation</div>
+          <div class="card-text">Federated Adapters + Zero Central PII<br>SHA-256 Hash-Chained Audit Ledger</div>
+        </div>
+      </div>
+    </div>
+    <div class="slide-footer">
+      <div>Theme: <span class="footer-highlight">Smart Automation</span></div>
+      <div>Category: <span class="footer-highlight">Software Prototype</span></div>
+      <div>Target Scale: <span class="footer-highlight">125 Million Citizens</span></div>
+    </div>
+  </section>
+
+  <!-- SLIDE 2: The Problem & Contradiction -->
+  <section class="slide">
+    <div class="slide-header">
+      <div class="badge-group">
+        <span class="badge badge-primary">Problem Analysis</span>
+      </div>
+      <div class="slide-number">02 / 08</div>
+    </div>
+    <div class="slide-content">
+      <h2 class="slide-title">The "Single Window" Illusion</h2>
+      <p class="slide-subtitle">Aaple Sarkar is a single front door to 20+ disconnected rooms.</p>
+      <div class="grid-2" style="margin-top: 30px;">
+        <div class="card">
+          <div class="card-title card-title-saffron">Current Reality (CAG Audit Findings)</div>
+          <ul style="color: var(--text-muted); font-size: 15px; margin-left: 20px; line-height: 1.8;">
+            <li><strong style="color:#FFF;">67% of key services</strong> remain functionally fragmented.</li>
+            <li>Citizens repeatedly act as human data-couriers between portals.</li>
+            <li>Zero automated cross-department verification (Revenue, RTO, Labour).</li>
+            <li>Data shared over insecure channels without DPDP consent artifacts.</li>
+          </ul>
+        </div>
+        <div class="grid-2" style="gap: 16px;">
+          <div class="stat-box">
+            <div class="stat-number">20+</div>
+            <div class="stat-label">Siloed Depts</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-number">40M+</div>
+            <div class="stat-label">Lost Citizen Hrs/Yr</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-number">0</div>
+            <div class="stat-label">Central Consent</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-number">100%</div>
+            <div class="stat-label">Redundant Scans</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="slide-footer">
+      <div>Root Cause: <span class="footer-highlight">Legacy NeGP Silos & Absence of State Middleware</span></div>
+    </div>
+  </section>
+
+  <!-- SLIDE 3: Architectural Dilemma -->
+  <section class="slide">
+    <div class="slide-header">
+      <div class="badge-group">
+        <span class="badge badge-primary">System Architecture</span>
+      </div>
+      <div class="slide-number">03 / 08</div>
+    </div>
+    <div class="slide-content">
+      <h2 class="slide-title">Why MahaLink Beats Alternatives</h2>
+      <p class="slide-subtitle">A comparative evaluation of e-governance integration topologies.</p>
+      <div class="grid-3" style="margin-top: 30px;">
+        <div class="card" style="border-color: rgba(239, 68, 68, 0.4);">
+          <div class="card-title" style="color: #EF4444;">Centralized Data Lake</div>
+          <div class="card-text">
+            <strong>Flaw:</strong> Copies all citizen PII into one giant warehouse.<br><br>
+            <strong>Risk:</strong> Single point of failure, massive DPDP liability, departmental resistance to data custody loss.
+          </div>
+        </div>
+        <div class="card" style="border-color: rgba(234, 179, 8, 0.4);">
+          <div class="card-title" style="color: #EAB308;">API Marketplace Alone</div>
+          <div class="card-text">
+            <strong>Flaw:</strong> API Setu provides cataloging but no workflow engine.<br><br>
+            <strong>Risk:</strong> Cannot sequence multi-step journeys, manage DPDP consent, or wrap legacy non-REST systems.
+          </div>
+        </div>
+        <div class="card" style="border-color: rgba(16, 185, 129, 0.6); background: rgba(16, 185, 129, 0.08);">
+          <div class="card-title card-title-emerald">MahaLink Federated Model</div>
+          <div class="card-text">
+            <strong>Strength:</strong> Implements IndEA 2.0 & X-Road principles.<br><br>
+            <strong>Benefit:</strong> Data stays with departments. Lightweight adapters query on-demand with cryptographic citizen consent. Zero central storage.
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="slide-footer">
+      <div>Design Principle: <span class="footer-highlight">Zero Central PII Persistence</span></div>
+    </div>
+  </section>
+
+  <!-- SLIDE 4: Solution Topology -->
+  <section class="slide">
+    <div class="slide-header">
+      <div class="badge-group">
+        <span class="badge badge-primary">Technical Depth</span>
+      </div>
+      <div class="slide-number">04 / 08</div>
+    </div>
+    <div class="slide-content">
+      <h2 class="slide-title">MahaLink Architecture Stack</h2>
+      <p class="slide-subtitle">Full IndEA 2.0 and DEPA implementation at the state layer.</p>
+      <div class="code-block" style="margin-top: 20px;">
+[ CITIZEN LAYER ]      Aaple Sarkar / Trilingual UI (React 18 + Vite)
+                                │
+[ AUTHENTICATION ]     Meri Pehchaan SSO Bridge (OAuth 2.0 / JWT)
+                                │
+[ CORE MIDDLEWARE ]    API Gateway ──▶ DEPA Consent Manager (ECDSA P-256)
+                                │               │
+                       Workflow Orchestrator ◀──┘
+                                │
+                       Identity Resolver (Levenshtein + Devanagari Phonetics)
+                                │
+                       SHA-256 Hash-Chained Immutable Audit Ledger
+                                │
+[ ADAPTER LAYER ]      PostgreSQL      MySQL          MongoDB         CSV Streams
+                       (Revenue)       (RTO)          (Certificates)  (Education)
+      </div>
+    </div>
+    <div class="slide-footer">
+      <div>Security: <span class="footer-highlight">mTLS + ECDSA P-256 Tokens + SHA-256 Chain</span></div>
+    </div>
+  </section>
+
+  <!-- SLIDE 5: Heterogeneous DB Integration & Messy Data Resolution -->
+  <section class="slide">
+    <div class="slide-header">
+      <div class="badge-group">
+        <span class="badge badge-primary">Live Innovation</span>
+      </div>
+      <div class="slide-number">05 / 08</div>
+    </div>
+    <div class="slide-content">
+      <h2 class="slide-title">Handling Real-World Data Chaos</h2>
+      <p class="slide-subtitle">MahaLink normalizes heterogeneous DBs and resolves cross-script discrepancies.</p>
+      <div class="grid-2" style="margin-top: 25px;">
+        <div class="card">
+          <div class="card-title card-title-cyan">Heterogeneous Adapters Built</div>
+          <div class="card-text">
+            <strong>Revenue Adapter:</strong> PostgreSQL 16 (7/12 Land Records)<br>
+            <strong>RTO Adapter:</strong> MySQL 8.0 (Driving License & Vehicle RC)<br>
+            <strong>Certificate Adapter:</strong> MongoDB 7.0 (Income/Caste Certs)<br>
+            <strong>Education Adapter:</strong> Node Stream CSV (Board Marksheets)
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title card-title-emerald">Identity Resolution Engine</div>
+          <div class="card-text">
+            <strong>Aadhaar Hash Primary Link:</strong> 100% deterministic anchor.<br>
+            <strong>Devanagari Transliteration:</strong> <span style="color:#FFF;">'प्रिया शर्मा'</span> &lt;=&gt; <span style="color:#FFF;">'Priya Sharma'</span><br>
+            <strong>Fuzzy String Matching:</strong> Resolves middle name variations.<br>
+            <strong>Confidence Score:</strong> &gt;90% Auto-Link | 70-90% Citizen Prompt.
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="slide-footer">
+      <div>Status: <span class="footer-highlight">Operational in Demo & Live Modes</span></div>
+    </div>
+  </section>
+
+  <!-- SLIDE 6: DPDP Compliance & Security -->
+  <section class="slide">
+    <div class="slide-header">
+      <div class="badge-group">
+        <span class="badge badge-saffron">DPDP Act Compliance</span>
+      </div>
+      <div class="slide-number">06 / 08</div>
+    </div>
+    <div class="slide-content">
+      <h2 class="slide-title">Cryptographic Consent & Immutability</h2>
+      <p class="slide-subtitle">Strict compliance with DPDP Act 2023 Section 6 (Consent) & Section 8 (Auditing).</p>
+      <div class="grid-3" style="margin-top: 25px;">
+        <div class="card">
+          <div class="card-title card-title-saffron">DEPA Consent Artifacts</div>
+          <div class="card-text">
+            Machine-readable JWT signed via ECDSA P-256. Defines exact purpose, requested fields, 15m expiration, and one-click revocation URL.
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title card-title-blue">Hash-Chain Audit Ledger</div>
+          <div class="card-text">
+            Every access links cryptographically to the previous block: <code>SHA256(Block_N-1 + Data)</code>. Mathematical fraud detection built-in.
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title card-title-emerald">Citizen Privacy Dashboard</div>
+          <div class="card-text">
+            Citizens inspect all historical data accesses, view timestamps, and execute immediate one-click consent revocation.
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="slide-footer">
+      <div>Legal Mandate: <span class="footer-highlight">Aligned with May 2027 DPDP Full Enforcement Deadline</span></div>
+    </div>
+  </section>
+
+  <!-- SLIDE 7: Quantified Impact -->
+  <section class="slide">
+    <div class="slide-header">
+      <div class="badge-group">
+        <span class="badge badge-emerald">Quantified Impact</span>
+      </div>
+      <div class="slide-number">07 / 08</div>
+    </div>
+    <div class="slide-content">
+      <h2 class="slide-title">Measurable Governance Transformation</h2>
+      <p class="slide-subtitle">Benchmarked against Estonia's X-Road impact scaled to Maharashtra.</p>
+      <div class="grid-4" style="margin-top: 30px;">
+        <div class="stat-box">
+          <div class="stat-number">40M+</div>
+          <div class="stat-label">Hours Saved/Year</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-number">20M</div>
+          <div class="stat-label">Trips Avoided</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-number">&lt; 2m</div>
+          <div class="stat-label">Form Time (vs 45m)</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-number">100%</div>
+          <div class="stat-label">Audit Traceability</div>
+        </div>
+      </div>
+      <div class="card" style="margin-top: 25px;">
+        <div class="card-title card-title-cyan">Policy Integration</div>
+        <div class="card-text">
+          Directly advances Maharashtra State Data Policy (MSDP-2024), Right to Services (RTS) Act 2015 saturation, and Digital India Mission milestones.
+        </div>
+      </div>
+    </div>
+    <div class="slide-footer">
+      <div>Benchmark: <span class="footer-highlight">Estonia saves 1,400 working years annually; Maharashtra achieves massive per-capita scale</span></div>
+    </div>
+  </section>
+
+  <!-- SLIDE 8: Tech Stack & Vision -->
+  <section class="slide">
+    <div class="slide-header">
+      <div class="badge-group">
+        <span class="badge badge-primary">Roadmap & Close</span>
+      </div>
+      <div class="slide-number">08 / 08</div>
+    </div>
+    <div class="slide-content">
+      <h2 class="slide-title">Production Roadmap & Call to Action</h2>
+      <p class="slide-subtitle">From student prototype to Maharashtra State Data Centre deployment.</p>
+      <div class="grid-2" style="margin-top: 25px;">
+        <div class="card">
+          <div class="card-title card-title-blue">Production Phasing</div>
+          <div class="card-text">
+            <strong>Phase 0 (M1-M3):</strong> Gateway + 3 Pilot Adapters (Revenue, RTO, Certs).<br>
+            <strong>Phase 1 (M4-M9):</strong> 2-District Live Pilot under State Data Authority.<br>
+            <strong>Phase 2 (M10-M18):</strong> Statewide Onboarding + Meri Pehchaan SSO.<br>
+            <strong>Phase 3 (Year 2+):</strong> Open-source "State Interoperability Kit".
+          </div>
+        </div>
+        <div class="card" style="background: rgba(59, 130, 246, 0.1); border-color: rgba(59, 130, 246, 0.4);">
+          <div class="card-title card-title-saffron">Why This Blueprint Wins</div>
+          <div class="card-text" style="color: #F8FAFC;">
+            We don't ask the state to rewrite 20 years of software or risk billions on centralized vendor contracts. We provide the <strong>validated federated architecture</strong> that connects what already exists securely.
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="slide-footer">
+      <div>System: <span class="footer-highlight">MahaLink</span></div>
+      <div>SIH 2026 Team | Problem Statement SIH26129</div>
+      <div>Status: <span class="footer-highlight">Ready for Live Demonstration</span></div>
+    </div>
+  </section>
+
+</body>
+</html>

@@ -1,0 +1,25 @@
+{
+  "id": "scholarship_application",
+  "title_en": "Post-Matric State Scholarship Application",
+  "title_mr": "मॅट्रिकोत्तर राज्य शिष्यवृत्ती अर्ज",
+  "title_hi": "मैट्रिकोत्तर राज्य छात्रवृत्ति आवेदन",
+  "description": "Cross-verification of 10th/12th board examination marksheets, caste credentials, and family income for scholarship grant.",
+  "category": "Higher Education & Social Welfare",
+  "required_departments": ["education", "certificates", "revenue"],
+  "consent_scope": [
+    "education:marksheet:read",
+    "certificates:caste_certificate:read",
+    "revenue:family_income:read"
+  ],
+  "default_validity_minutes": 20,
+  "statutory_basis": "MAHARASHTRA_SCHOLARSHIP_REGULATIONS",
+  "form_fields": [
+    { "key": "student_name", "label_en": "Student Full Name", "label_mr": "विद्यार्थ्याचे पूर्ण नाव", "source": "identity" },
+    { "key": "student_roll_no", "label_en": "Board Exam Roll Number", "label_mr": "बोर्ड परीक्षा बैठक क्रमांक", "source": "education" },
+    { "key": "marks_percentage", "label_en": "HSC Marks Percentage", "label_mr": "बारावी टक्केवारी", "source": "education" },
+    { "key": "caste_certificate_id", "label_en": "Caste Certificate ID", "label_mr": "जात प्रमाणपत्र क्रमांक", "source": "certificates" },
+    { "key": "caste_category", "label_en": "Caste Category (SC/ST/OBC/General)", "label_mr": "जात संवर्ग", "source": "certificates" },
+    { "key": "family_annual_income", "label_en": "Family Annual Income (INR)", "label_mr": "कुटुंबाचे वार्षिक उत्पन्न (रुपये)", "source": "certificates" },
+    { "key": "eligibility_status", "label_en": "Scholarship Eligibility", "label_mr": "शिष्यवृत्ती पात्रता", "source": "computed" }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "id": "income_certificate",
+  "title_en": "Income Certificate Application",
+  "title_mr": "उत्पन्न प्रमाणपत्र अर्ज",
+  "title_hi": "आय प्रमाण पत्र आवेदन",
+  "description": "Application for official Maharashtra state income assessment certificate using 7/12 Land Records and Vehicle Asset data.",
+  "category": "Revenue & Citizen Certificates",
+  "required_departments": ["revenue", "rto", "certificates"],
+  "consent_scope": [
+    "revenue:7_12:read",
+    "rto:vehicle_rc:read",
+    "certificates:historical_income:read"
+  ],
+  "default_validity_minutes": 15,
+  "statutory_basis": "MAHARASHTRA_RIGHT_TO_SERVICES_ACT_2015",
+  "form_fields": [
+    { "key": "applicant_name", "label_en": "Applicant Full Name", "label_mr": "अर्जदाराचे पूर्ण नाव", "source": "identity" },
+    { "key": "land_survey_number", "label_en": "7/12 Land Survey Number", "label_mr": "७/१२ गट / सर्व्हे नंबर", "source": "revenue" },
+    { "key": "land_area_hectares", "label_en": "Agricultural Land Area (Hectares)", "label_mr": "शेती जमिनीचे क्षेत्र (हेक्टर)", "source": "revenue" },
+    { "key": "property_tax_annual", "label_en": "Assessment Tax (INR)", "label_mr": "वार्षिक कर आकारणी (रुपये)", "source": "revenue" },
+    { "key": "vehicle_count", "label_en": "Registered Vehicles Count", "label_mr": "नोंदणीकृत वाहनांची संख्या", "source": "rto" },
+    { "key": "primary_vehicle_reg", "label_en": "Primary Vehicle Registration", "label_mr": "मुख्य वाहन नोंदणी क्रमांक", "source": "rto" },
+    { "key": "previous_assessed_income", "label_en": "Last Assessed Annual Income (INR)", "label_mr": "मागील मूल्यांकित वार्षिक उत्पन्न (रुपये)", "source": "certificates" },
+    { "key": "calculated_income_bracket", "label_en": "Computed Income Category", "label_mr": "उत्पन्न वर्गवारी", "source": "computed" }
+  ]
+}
