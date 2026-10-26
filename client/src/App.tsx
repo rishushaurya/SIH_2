@@ -1,128 +1,97 @@
 import React, { useEffect, useState } from 'react';
+import { api, SessionUser } from './api';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { Footer } from './components/Footer';
-import { Header } from './components/Header';
+import { Header, Tab } from './components/Header';
 import { InspectionPanel } from './components/InspectionPanel';
 import { useTrilingual } from './hooks/useTrilingual';
 import { AdminConsolePage } from './pages/AdminConsolePage';
 import { ConsentPage } from './pages/ConsentPage';
 import { FormWizardPage } from './pages/FormWizardPage';
 import { HomePage } from './pages/HomePage';
+import { LoginPage } from './pages/LoginPage';
 
 export const App: React.FC = () => {
-  const { locale, changeLocale } = useTrilingual();
-  const [user, setUser] = useState<any>(null);
-  const [loginReady, setLoginReady] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<'services' | 'apply' | 'consents' | 'admin'>('services');
+  const { t } = useTrilingual();
+  const [user, setUser] = useState<SessionUser | null>(null);
+  const [booting, setBooting] = useState(true);
+  const [activeTab, setActiveTab] = useState<Tab>('services');
   const [selectedJourneyId, setSelectedJourneyId] = useState<string>('income_certificate');
-  const [isConsoleOpen, setIsConsoleOpen] = useState<boolean>(true); // Open by default for evaluator wow factor!
+  const [isConsoleOpen, setIsConsoleOpen] = useState<boolean>(() => window.innerWidth > 1024);
 
-  // Auto-login as default Persona 1 in demo mode or authenticate custom citizen
-  const handleLogin = async (loginParam: string | { custom_name: string; custom_aadhaar: string; district?: string } = 'P-01') => {
-    try {
-      const body = typeof loginParam === 'string'
-        ? { persona_id: loginParam }
-        : loginParam;
+  // Restore an existing session (HttpOnly cookie); any 401 later returns to the login screen.
+  useEffect(() => {
+    api<{ user: SessionUser }>('/api/v1/auth/session')
+      .then((data) => signIn(data.user))
+      .catch(() => setUser(null))
+      .finally(() => setBooting(false));
+    const onExpired = () => setUser(null);
+    window.addEventListener('mahalink:session-expired', onExpired);
+    return () => window.removeEventListener('mahalink:session-expired', onExpired);
+  }, []);
 
-      const res = await fetch('/api/v1/auth/sso/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json();
-      if (data.token) {
-        localStorage.setItem('mahalink_auth_token', data.token);
-        setUser(data.user);
-        setLoginReady(true);
-      }
-    } catch {
-      // Fallback local user object for offline demo
-      const name = typeof loginParam === 'string' ? 'Priya Ramesh Sharma' : loginParam.custom_name;
-      setUser({
-        id: typeof loginParam === 'string' ? loginParam : 'CUSTOM',
-        full_name: name,
-        aadhaar_hash: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
-        masked_aadhaar: 'XXXX-XXXX-9921',
-        role: 'CITIZEN',
-      });
-      setLoginReady(true);
-    }
+  const signIn = (signedIn: SessionUser) => {
+    setUser(signedIn);
+    setActiveTab(signedIn.role === 'CITIZEN' ? 'services' : 'admin');
   };
 
-  useEffect(() => {
-    handleLogin('P-01');
-  }, []);
+  const handleLogout = async () => {
+    await api('/api/v1/auth/logout', { method: 'POST' }).catch(() => undefined);
+    sessionStorage.clear(); // drop form drafts holding personal data
+    setUser(null);
+  };
 
   const handleSelectService = (serviceId: string) => {
     setSelectedJourneyId(serviceId);
     setActiveTab('apply');
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem('mahalink_auth_token');
-    handleLogin('P-01'); // Auto-reset in demo
-  };
+  if (booting) {
+    return (
+      <div style={{ padding: '64px 24px', textAlign: 'center', color: 'var(--gov-navy)', fontWeight: 600 }} role="status">
+        {t('loading')}
+      </div>
+    );
+  }
 
   return (
     <ErrorBoundary>
       <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', background: 'var(--gov-bg)' }}>
-        {/* Government Masthead & Nav Header */}
         <Header
           user={user}
-          locale={locale}
-          onLocaleChange={changeLocale}
           onLogout={handleLogout}
           activeTab={activeTab}
-          onTabChange={(tab: any) => setActiveTab(tab)}
-          onPersonaSelect={(pId) => handleLogin(pId)}
+          onTabChange={setActiveTab}
           isConsoleOpen={isConsoleOpen}
           onToggleConsole={() => setIsConsoleOpen(!isConsoleOpen)}
         />
 
-        {/* Main Content Layout with Optional Split-Screen Console */}
-        <div style={{ display: 'flex', flex: 1 }}>
-          <main style={{ flex: 1, minWidth: 0, paddingBottom: '60px' }}>
-            {!loginReady ? (
-              <div style={{ maxWidth: '1400px', margin: '0 auto', padding: '48px 24px', textAlign: 'center' }}>
-                <div style={{ color: 'var(--gov-navy)', fontWeight: 700, fontSize: '16px', marginBottom: '12px' }}>
-                  प्रणाली लोड होत आहे / Authenticating via Meri Pehchaan SSO...
-                </div>
-                <div style={{ color: 'var(--gov-slate-500)', fontSize: '13px' }}>
-                  Initializing Zero-Trust Security Perimeter & Adapter Bridges
-                </div>
-              </div>
-            ) : (
-              <>
-                {activeTab === 'services' && (
-                  <HomePage
-                    onSelectService={handleSelectService}
-                    onOpenConsole={() => setIsConsoleOpen(true)}
-                  />
-                )}
-
-                {activeTab === 'apply' && (
-                  <FormWizardPage
-                    journeyId={selectedJourneyId}
-                    user={user}
-                    onBack={() => setActiveTab('services')}
-                  />
-                )}
-
-                {activeTab === 'consents' && <ConsentPage />}
-
-                {activeTab === 'admin' && <AdminConsolePage />}
-              </>
-            )}
+        {!user ? (
+          <main style={{ flex: 1 }}>
+            <LoginPage onLogin={signIn} />
           </main>
+        ) : (
+          <div className="workspace" style={{ display: 'flex', flex: 1 }}>
+            <main style={{ flex: 1, minWidth: 0, paddingBottom: '60px' }}>
+              {activeTab === 'services' && (
+                <HomePage
+                  canApply={user.role === 'CITIZEN'}
+                  onSelectService={handleSelectService}
+                  onOpenConsole={() => setIsConsoleOpen(true)}
+                />
+              )}
+              {activeTab === 'apply' && (
+                <FormWizardPage journeyId={selectedJourneyId} user={user} onBack={() => setActiveTab('services')} />
+              )}
+              {activeTab === 'consents' && <ConsentPage />}
+              {activeTab === 'admin' && <AdminConsolePage user={user} />}
+            </main>
 
-          {/* Right-Hand Split-Screen Live Architecture Console */}
-          <InspectionPanel
-            isOpen={isConsoleOpen}
-            onClose={() => setIsConsoleOpen(false)}
-          />
-        </div>
+            {/* Live Inspection Console: shows this citizen's own pipeline events (admins see all, without names) */}
+            <InspectionPanel isOpen={isConsoleOpen} onClose={() => setIsConsoleOpen(false)} />
+          </div>
+        )}
 
-        {/* Government Footer */}
         <Footer />
       </div>
     </ErrorBoundary>

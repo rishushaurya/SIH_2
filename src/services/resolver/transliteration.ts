@@ -22,6 +22,8 @@ const DEVANAGARI_MAP: Record<string, string> = {
   'े': 'e', 'ै': 'ai', 'ो': 'o', 'ौ': 'au', 'ं': 'n', '्': '',
 };
 
+const CONSONANTS = new Set('कखगघङचछजझञटठडढणतथदधनपफबभमयरलवशषसहळ');
+
 // Common Maharashtra Surname & Name Canonical Aliases
 const COMMON_NAME_ALIASES: Record<string, string> = {
   'शर्मा': 'sharma',
@@ -58,15 +60,13 @@ export function transliterateDevanagari(text: string): string {
       return COMMON_NAME_ALIASES[lowerWord];
     }
 
-    // Character by character transliteration
+    // Character by character transliteration. A consonant followed directly by another consonant keeps its
+    // inherent 'a' (क+व+ि -> "kavi"); word-final schwa is dropped as in spoken Marathi.
     let result = '';
     for (let i = 0; i < word.length; i++) {
       const char = word[i];
-      if (DEVANAGARI_MAP[char] !== undefined) {
-        result += DEVANAGARI_MAP[char];
-      } else {
-        result += char;
-      }
+      result += DEVANAGARI_MAP[char] ?? char;
+      if (CONSONANTS.has(char) && CONSONANTS.has(word[i + 1])) result += 'a';
     }
     return result;
   });

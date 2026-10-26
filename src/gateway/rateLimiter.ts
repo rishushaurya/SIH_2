@@ -1,32 +1,31 @@
 import { NextFunction, Request, Response } from 'express';
 
-interface RateLimitRecord {
-  timestamps: number[];
-}
+const memoryStore = new Map<string, number[]>();
+let longestWindowMs = 60_000;
 
-const memoryStore = new Map<string, RateLimitRecord>();
+// Drop idle keys so the store cannot grow without bound (memory-exhaustion DoS).
+setInterval(() => {
+  const cutoff = Date.now() - longestWindowMs;
+  for (const [key, timestamps] of memoryStore) {
+    if (timestamps[timestamps.length - 1] < cutoff) memoryStore.delete(key);
+  }
+}, 60_000).unref();
 
-export function createRateLimiter(options: { maxRequests: number; windowSeconds: number; name?: string }) {
+// Sliding-window limiter keyed by citizen when authenticated, else by client IP (set TRUST_PROXY behind a proxy).
+// seniordev: per-process store; use Redis when running more than one gateway instance.
+export function createRateLimiter(options: { maxRequests: number; windowSeconds: number; name: string }) {
   const windowMs = options.windowSeconds * 1000;
+  longestWindowMs = Math.max(longestWindowMs, windowMs);
 
   return (req: Request, res: Response, next: NextFunction) => {
-    const ip = req.ip || req.socket.remoteAddress || '127.0.0.1';
-    const key = `${options.name || 'global'}_${ip}`;
+    const subject = (req as any).user?.citizen_hash || req.ip || 'unknown';
+    const key = `${options.name}:${subject}`;
     const now = Date.now();
+    const timestamps = (memoryStore.get(key) || []).filter((ts) => now - ts < windowMs);
 
-    let record = memoryStore.get(key);
-    if (!record) {
-      record = { timestamps: [] };
-      memoryStore.set(key, record);
-    }
-
-    // Filter timestamps within the current sliding window
-    record.timestamps = record.timestamps.filter((ts) => now - ts < windowMs);
-
-    if (record.timestamps.length >= options.maxRequests) {
-      const oldestTs = record.timestamps[0];
-      const resetInSeconds = Math.ceil((oldestTs + windowMs - now) / 1000);
-
+    if (timestamps.length >= options.maxRequests) {
+      const resetInSeconds = Math.ceil((timestamps[0] + windowMs - now) / 1000);
+      memoryStore.set(key, timestamps);
       res.setHeader('Retry-After', resetInSeconds.toString());
       return res.status(429).json({
         error: 'RATE_LIMIT_EXCEEDED',
@@ -36,7 +35,8 @@ export function createRateLimiter(options: { maxRequests: number; windowSeconds:
       });
     }
 
-    record.timestamps.push(now);
+    timestamps.push(now);
+    memoryStore.set(key, timestamps);
     next();
   };
 }

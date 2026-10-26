@@ -1,54 +1,39 @@
-import cors from 'cors';
-import express from 'express';
-import { env } from './config/env';
-import { globalErrorHandler } from './gateway/errorHandler';
-import router from './gateway/routes';
-import { securityHeadersMiddleware } from './gateway/securityHeaders';
+import { createApp } from './app';
+import { env, oidcEnabled } from './config/env';
+import { log } from './gateway/logger';
+import { auditLedger } from './services/audit/hashChain';
+import { ConsentManager } from './services/consent/consentManager';
+import { startLiveListener } from './services/ingest/liveListener';
 
-const app = express();
+// Tamper detection on startup: refuse to run on a broken audit chain (fail closed).
+const chain = auditLedger.verifyChainIntegrity();
+if (!chain.isValid) {
+  log('ERROR', 'AUDIT LEDGER INTEGRITY FAILURE — refusing to start', { message: chain.message });
+  process.exit(1);
+}
+ConsentManager.restore(auditLedger.allBlocks());
 
-// 1. Perimeter Security & Middlewares
-app.use(securityHeadersMiddleware);
-app.use(
-  cors({
-    origin: ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://localhost:5173'],
-    credentials: true,
-  })
-);
-app.use(express.json({ limit: '1mb' }));
-app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+if (env.NODE_ENV === 'production' && env.DEMO_MODE) {
+  log('WARN', 'DEMO_MODE=true in production: demo personas and fixture fallback are enabled. Set DEMO_MODE=false for a real deployment.');
+}
 
-// 2. Mount Master API Gateway Router
-app.use(router);
-
-// 3. Global Structured Error Handler
-app.use(globalErrorHandler);
-
-// 4. Start HTTP Server
-const server = app.listen(env.PORT, () => {
-  console.log(`\n============================================================`);
-  console.log(`  MAHALINK MIDDLEWARE GATEWAY RUNNING ON PORT ${env.PORT}`);
-  console.log(`  Environment: ${env.NODE_ENV} | Demo Mode: ${env.DEMO_MODE}`);
-  console.log(`  Health Check: http://localhost:${env.PORT}/health`);
-  console.log(`============================================================\n`);
+const server = createApp().listen(env.PORT, () => {
+  log('INFO', 'MahaLink gateway started', {
+    port: env.PORT,
+    environment: env.NODE_ENV,
+    mode: env.DEMO_MODE ? 'demo' : 'live',
+    meri_pehchaan_oidc: oidcEnabled ? 'enabled' : 'not configured',
+    audit_blocks_verified: chain.totalBlocks,
+  });
+  void startLiveListener();
 });
 
-// 5. Graceful Shutdown Handler
 const handleShutdown = (signal: string) => {
-  console.log(`\nReceived ${signal}. Shutting down MahaLink Gateway gracefully...`);
-  server.close(() => {
-    console.log('HTTP server closed. Exiting process.');
-    process.exit(0);
-  });
-
-  // Force shutdown if cleanup hangs
-  setTimeout(() => {
-    console.error('Forcefully terminating process after timeout.');
-    process.exit(1);
-  }, 3000);
+  log('INFO', `Received ${signal}. Shutting down gracefully.`);
+  server.close(() => process.exit(0));
+  // Force shutdown if open SSE connections keep the server alive
+  setTimeout(() => process.exit(0), 3000).unref();
 };
 
 process.on('SIGTERM', () => handleShutdown('SIGTERM'));
 process.on('SIGINT', () => handleShutdown('SIGINT'));
-
-export default app;

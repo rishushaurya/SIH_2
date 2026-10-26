@@ -25,3 +25,12 @@ yarn-error.log*
 Thumbs.db
 .vscode/
 .idea/
+
+# Runtime state (audit ledger, consent signing key) and local TLS certs
+data/
+nginx/certs/
+# Records added by the live-ingest demo
+src/db/files/*_ingested.csv
+
+# mTLS development PKI (npm run certs:mtls)
+certs/

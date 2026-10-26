@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Terminal, Shield, CheckCircle2, AlertTriangle, X } from 'lucide-react';
+import { api } from '../api';
 
 interface InspectionEvent {
   type: string;
@@ -21,6 +22,7 @@ export const InspectionPanel: React.FC<InspectionPanelProps> = ({ isOpen, onClos
   useEffect(() => {
     if (!isOpen) return;
 
+    // Same-origin EventSource sends the HttpOnly session cookie; the server filters events per citizen.
     const eventSource = new EventSource('/api/v1/events/stream');
 
     eventSource.onmessage = (e) => {
@@ -48,18 +50,9 @@ export const InspectionPanel: React.FC<InspectionPanelProps> = ({ isOpen, onClos
   const handleVerifyChain = async () => {
     setIsVerifying(true);
     try {
-      const token = localStorage.getItem('mahalink_auth_token');
-      const res = await fetch('/api/v1/audit/verify', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-      });
-      const data = await res.json();
-      setVerificationResult(data);
-    } catch {
-      setVerificationResult({ isValid: false, message: 'Verification API unreachable.' });
+      setVerificationResult(await api('/api/v1/audit/verify', { method: 'POST' }));
+    } catch (err: any) {
+      setVerificationResult({ isValid: false, message: err.message });
     } finally {
       setIsVerifying(false);
     }
@@ -69,6 +62,7 @@ export const InspectionPanel: React.FC<InspectionPanelProps> = ({ isOpen, onClos
 
   return (
     <div
+      className="inspection-panel"
       style={{
         width: '480px',
         height: 'calc(100vh - 110px)',
@@ -122,7 +116,7 @@ export const InspectionPanel: React.FC<InspectionPanelProps> = ({ isOpen, onClos
             <Shield size={12} />
             <span>{isVerifying ? 'Checking...' : 'Verify Hash Chain'}</span>
           </button>
-          <button onClick={onClose} style={{ color: '#94A3B8', padding: '2px' }}>
+          <button onClick={onClose} aria-label="Close live console" style={{ color: '#94A3B8', padding: '2px' }}>
             <X size={16} />
           </button>
         </div>
@@ -212,7 +206,7 @@ export const InspectionPanel: React.FC<InspectionPanelProps> = ({ isOpen, onClos
       {/* Bottom Console Footer */}
       <div style={{ padding: '8px 16px', background: '#0B1120', borderTop: '1px solid #1E293B', fontSize: '11px', color: '#64748B', display: 'flex', justifyContent: 'space-between' }}>
         <span>Events Streamed: {events.length}</span>
-        <span>mTLS + ECDSA Active</span>
+        <span>ES256 consent · SHA-256 audit chain</span>
       </div>
     </div>
   );

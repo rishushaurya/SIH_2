@@ -1,45 +1,37 @@
-import { auditLedger } from '../src/services/audit/hashChain';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { env } from '../src/config/env';
+import { HashChainLedger } from '../src/services/audit/hashChain';
 
-function runTamperTest() {
-  console.log('\n============================================================');
-  console.log('       CRYPTOGRAPHIC HASH-CHAIN TAMPER DETECTION TEST       ');
-  console.log('============================================================\n');
+// Live tamper demonstration on a COPY of the real ledger file — the production ledger is never touched.
+// Plays the "rogue administrator" from the judge Q&A: edit one historical block on disk, then re-verify.
+const copy = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mahalink-tamper-')), 'audit-ledger.jsonl');
+if (env.AUDIT_LOG_PATH && fs.existsSync(env.AUDIT_LOG_PATH)) fs.copyFileSync(env.AUDIT_LOG_PATH, copy);
 
-  // 1. Initial State Check
-  const initialCheck = auditLedger.verifyChainIntegrity();
-  console.log(`[INFO] Initial Hash-Chain Status: ${initialCheck.isValid ? 'VALID' : 'INVALID'}`);
-  console.log(`       Blocks on Ledger: ${initialCheck.totalBlocks}`);
-
-  // 2. Append genuine test block
-  const block = auditLedger.append({
-    actor_id: 'citizen_audit_test_hash',
-    action: 'DATA_FETCH',
-    purpose: 'Cryptographic Integrity Verification Test',
-    payload_digest: 'GENUINE_712_DIGEST_HASH_abc123',
-  });
-  console.log(`[INFO] Mined Block #${block.index} -> Hash: ${block.block_hash.slice(0, 16)}...`);
-
-  // 3. Artificially tamper with the ledger block
-  console.log(`[ACTION] Artificially altering Block #${block.index} payload to 'MALICIOUS_TAMPERED_RECORD'...`);
-  auditLedger.tamperBlockForTest(block.index, 'MALICIOUS_TAMPERED_RECORD');
-
-  // 4. Run mathematical integrity verification
-  const tamperCheck = auditLedger.verifyChainIntegrity();
-
-  if (!tamperCheck.isValid && tamperCheck.corruptedBlockIndex === block.index) {
-    console.log(`\n[PASS] FRAUD MATHEMATICALLY DETECTED!`);
-    console.log(`       Corrupted Block Index: #${tamperCheck.corruptedBlockIndex}`);
-    console.log(`       Diagnostic Message: ${tamperCheck.message}`);
-  } else {
-    console.error(`\n[FAIL] Tampering was not detected by hash-chain verifier!`);
-    process.exit(1);
+const ledger = new HashChainLedger(copy);
+if (ledger.getBlockCount() < 3) {
+  for (const digest of ['DEMO_FETCH_7_12', 'DEMO_FETCH_RC']) {
+    ledger.append({ actor_id: 'f'.repeat(64), action: 'DATA_FETCH', department: 'revenue', purpose: 'Tamper demo', payload_digest: digest });
   }
-
-  // 5. Restore block for clean state
-  auditLedger.tamperBlockForTest(block.index, 'GENUINE_712_DIGEST_HASH_abc123');
-  const restoredCheck = auditLedger.verifyChainIntegrity();
-  console.log(`\n[INFO] Restored ledger block. Integrity status: ${restoredCheck.isValid ? 'VERIFIED INTACT' : 'STILL BROKEN'}`);
-  console.log('============================================================\n');
 }
 
-runTamperTest();
+const before = ledger.verifyChainIntegrity();
+console.log(`[1] Ledger copy: ${copy}`);
+console.log(`    ${before.message}`);
+
+const lines = fs.readFileSync(copy, 'utf8').trim().split('\n');
+const target = Math.max(1, Math.floor(lines.length / 2));
+const block = JSON.parse(lines[target]);
+console.log(`[2] Rogue admin edits block #${block.index} on disk (${block.action}, purpose "${block.purpose}")`);
+block.purpose = 'Routine maintenance';
+lines[target] = JSON.stringify(block);
+fs.writeFileSync(copy, `${lines.join('\n')}\n`);
+
+const after = new HashChainLedger(copy).verifyChainIntegrity();
+console.log(`[3] Re-verification after restart: ${after.message}`);
+if (after.isValid || after.corruptedBlockIndex !== block.index) {
+  console.error('[FAIL] Tampering was NOT detected.');
+  process.exit(1);
+}
+console.log(`[PASS] Tampering detected at block #${after.corruptedBlockIndex}. The gateway refuses to start on such a ledger.`);

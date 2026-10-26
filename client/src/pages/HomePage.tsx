@@ -1,14 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import { ArrowRight, Building2, CheckCircle2, FileText, Lock, Shield, Sparkles } from 'lucide-react';
+import { api } from '../api';
 import { SkeletonLoader } from '../components/SkeletonLoader';
 import { useTrilingual } from '../hooks/useTrilingual';
 
 interface HomePageProps {
+  canApply: boolean;
   onSelectService: (serviceId: string) => void;
   onOpenConsole: () => void;
 }
 
-export const HomePage: React.FC<HomePageProps> = ({ onSelectService, onOpenConsole }) => {
+export const HomePage: React.FC<HomePageProps> = ({ canApply, onSelectService, onOpenConsole }) => {
   const { t, locale } = useTrilingual();
   const [workflows, setWorkflows] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -18,15 +20,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onSelectService, onOpenConso
     setIsLoading(true);
     setError(null);
     try {
-      const token = localStorage.getItem('mahalink_auth_token');
-      const res = await fetch('/api/v1/workflows', {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-      if (!res.ok) throw new Error('Failed to load workflow directory.');
-      const data = await res.json();
-      setWorkflows(data.workflows || []);
+      setWorkflows((await api('/api/v1/workflows')).workflows);
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -244,6 +238,8 @@ export const HomePage: React.FC<HomePageProps> = ({ onSelectService, onOpenConso
 
                   <button
                     onClick={() => onSelectService(wf.id)}
+                    disabled={!canApply}
+                    className="btn"
                     style={{
                       width: '100%',
                       background: 'var(--gov-navy)',
@@ -258,8 +254,8 @@ export const HomePage: React.FC<HomePageProps> = ({ onSelectService, onOpenConso
                       gap: '8px',
                     }}
                   >
-                    <FileText size={16} />
-                    <span>{t('btn_apply')}</span>
+                    <FileText size={16} aria-hidden="true" />
+                    <span>{canApply ? t('btn_apply') : t('citizens_only')}</span>
                   </button>
                 </div>
               );

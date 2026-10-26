@@ -1,53 +1,149 @@
-version: '3.8'
+# MahaLink federated stack: three heterogeneous department databases + legacy CSV, a one-shot seeder
+# acting as the departments' DBA, and the MahaLink gateway that only holds SELECT-only credentials.
+#   npm run env:init && npm run docker:up      -> http://localhost:5000
+#   docker compose --profile tls up -d         -> https://localhost (needs nginx/certs, see README)
+#   docker compose --profile mtls up -d        -> Revenue served by a department security server over mTLS
+name: mahalink
+
+x-reader-env: &reader-env
+  NODE_ENV: production
+  DEMO_MODE: ${DEMO_MODE:-true}
+  TRUST_PROXY: ${TRUST_PROXY:-0}
+  JWT_SECRET: ${JWT_SECRET:?run npm run env:init first}
+  AADHAAR_PEPPER: ${AADHAAR_PEPPER:?run npm run env:init first}
+  CORS_ORIGINS: http://localhost:5000
+  PG_HOST: postgres-revenue
+  PG_DATABASE: maha_revenue
+  PG_USER: mahalink_reader
+  PG_PASSWORD: ${DB_READER_PASSWORD:?run npm run env:init first}
+  MYSQL_HOST: mysql-rto
+  MYSQL_DATABASE: maha_rto
+  MYSQL_USER: mahalink_reader
+  MYSQL_PASSWORD: ${DB_READER_PASSWORD}
+  MONGO_URI: mongodb://mahalink_reader:${DB_READER_PASSWORD}@mongo-certificates:27017/maha_certificates?authSource=maha_certificates
+  OIDC_PROVIDER_NAME: ${OIDC_PROVIDER_NAME:-Meri Pehchaan}
+  OIDC_ISSUER: ${OIDC_ISSUER:-}
+  OIDC_AUTHORIZE_URL: ${OIDC_AUTHORIZE_URL:-}
+  OIDC_TOKEN_URL: ${OIDC_TOKEN_URL:-}
+  OIDC_JWKS_URL: ${OIDC_JWKS_URL:-}
+  OIDC_USERINFO_URL: ${OIDC_USERINFO_URL:-}
+  OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+  OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+  OIDC_REDIRECT_URI: ${OIDC_REDIRECT_URI:-}
+  OIDC_SCOPE: ${OIDC_SCOPE:-openid}
+  OIDC_ID_CLAIM: ${OIDC_ID_CLAIM:-sub}
+  OIDC_NAME_CLAIM: ${OIDC_NAME_CLAIM:-name}
+  ADMIN_SUBJECTS: ${ADMIN_SUBJECTS:-}
+  # Department Security Server mode: e.g. REMOTE_ADAPTERS=revenue=https://revenue-security-server:8443
+  REMOTE_ADAPTERS: ${REMOTE_ADAPTERS:-}
+  MTLS_CA_FILE: /certs/ca.crt
 
 services:
   postgres-revenue:
     image: postgres:16-alpine
-    container_name: mahalink-postgres-revenue
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_PASSWORD: ${DB_ADMIN_PASSWORD:?run npm run env:init first}
       POSTGRES_DB: maha_revenue
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata_revenue:/var/lib/postgresql/data
+    ports: ['127.0.0.1:5432:5432'] # host-only: never exposed on the network
+    volumes: ['pgdata_revenue:/var/lib/postgresql/data']
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d maha_revenue"]
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d maha_revenue']
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
 
   mysql-rto:
-    image: mysql:8.0
-    container_name: mahalink-mysql-rto
+    image: mysql:8.4
     environment:
-      MYSQL_ROOT_PASSWORD: root
+      MYSQL_ROOT_PASSWORD: ${DB_ADMIN_PASSWORD}
       MYSQL_DATABASE: maha_rto
-    ports:
-      - "3306:3306"
-    volumes:
-      - mysqldata_rto:/var/lib/mysql
+    ports: ['127.0.0.1:3306:3306']
+    volumes: ['mysqldata_rto:/var/lib/mysql']
     healthcheck:
-      test: ["CMD", "mysqladmin" ,"ping", "-h", "localhost", "-u", "root", "-proot"]
+      test: ['CMD-SHELL', 'mysqladmin ping -h 127.0.0.1 -uroot -p"$$MYSQL_ROOT_PASSWORD" --silent']
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 20
 
   mongo-certificates:
     image: mongo:7.0
-    container_name: mahalink-mongo-certificates
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongodata_certs:/data/db
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: ${DB_ADMIN_PASSWORD}
+      MONGO_INITDB_DATABASE: maha_certificates
+    ports: ['127.0.0.1:27017:27017']
+    volumes: ['mongodata_certs:/data/db']
     healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      test: ['CMD', 'mongosh', '--quiet', '--eval', "db.adminCommand('ping').ok"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
+
+  # Department DBA job: schemas, indexes, validators, CDC trigger, seed personas, SELECT-only accounts.
+  # Also runs the live-ingest demo:  docker compose run --rm seed node dist/db/ingestCitizen.js --name "..."
+  seed:
+    build: .
+    command: ['node', 'dist/db/seed.js']
+    environment:
+      <<: *reader-env
+      PG_ADMIN_USER: postgres
+      PG_ADMIN_PASSWORD: ${DB_ADMIN_PASSWORD}
+      MYSQL_ADMIN_USER: root
+      MYSQL_ADMIN_PASSWORD: ${DB_ADMIN_PASSWORD}
+      MONGO_ADMIN_URI: mongodb://root:${DB_ADMIN_PASSWORD}@mongo-certificates:27017/maha_certificates?authSource=admin
+    volumes: ['./src/db/files:/app/dist/db/files'] # the board's CSV share (writable for the DBA)
+    depends_on:
+      postgres-revenue: { condition: service_healthy }
+      mysql-rto: { condition: service_healthy }
+      mongo-certificates: { condition: service_healthy }
+    restart: 'no'
+
+  mahalink:
+    build: .
+    environment:
+      <<: *reader-env
+      MTLS_CERT_FILE: /certs/mahalink-gateway.crt
+      MTLS_KEY_FILE: /certs/mahalink-gateway.key
+    ports: ['127.0.0.1:5000:5000']
+    volumes:
+      - 'mahalink_data:/app/data' # audit ledger (1-year retention) + consent signing key
+      - './src/db/files:/app/dist/db/files:ro' # MahaLink only reads the board's CSV share
+      - './certs/mtls:/certs:ro' # gateway client certificate (used only when REMOTE_ADAPTERS is set)
+    depends_on:
+      seed: { condition: service_completed_successfully }
+    restart: unless-stopped
+
+  # Department Security Server (X-Road pattern): the Revenue adapter runs next to the Revenue database,
+  # accepts only mutual TLS 1.3 from the gateway certificate and verifies each consent artifact itself.
+  # Prerequisites: npm run certs:mtls, and REMOTE_ADAPTERS=revenue=https://revenue-security-server:8443 in .env
+  revenue-security-server:
+    build: .
+    profiles: ['mtls']
+    command: ['node', 'dist/securityServer.js']
+    environment:
+      <<: *reader-env
+      SECURITY_SERVER_DEPARTMENT: revenue
+      CONSENT_JWKS_URL: http://mahalink:5000/.well-known/jwks.json
+      MTLS_CERT_FILE: /certs/revenue-security-server.crt
+      MTLS_KEY_FILE: /certs/revenue-security-server.key
+    volumes: ['./certs/mtls:/certs:ro']
+    depends_on:
+      seed: { condition: service_completed_successfully }
+    restart: unless-stopped
+
+  # Optional TLS 1.3 termination in front of the gateway (set TRUST_PROXY=1 in .env when using it).
+  tls-proxy:
+    image: nginx:1.27-alpine
+    profiles: ['tls']
+    ports: ['443:443', '80:80']
+    volumes:
+      - './nginx/default.conf:/etc/nginx/conf.d/default.conf:ro'
+      - './nginx/certs:/etc/nginx/certs:ro'
+    depends_on: [mahalink]
 
 volumes:
   pgdata_revenue:
   mysqldata_rto:
   mongodata_certs:
+  mahalink_data:

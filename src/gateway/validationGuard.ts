@@ -11,7 +11,7 @@ export function validateBody(schema: ZodSchema<any>) {
         return res.status(400).json({
           error: 'VALIDATION_ERROR',
           message: 'Invalid request payload structure.',
-          field_errors: error.errors.map((e) => ({
+          field_errors: error.issues.map((e) => ({
             field: e.path.join('.'),
             issue: e.message,
           })),

@@ -95,7 +95,7 @@ This is the visual web application that runs inside the citizen's browser at `ht
      - **Error:** Informative alert with a 1-click retry button.
      - **Empty:** Clean call-to-action banner.
 6. **Form Autosave Engine (`useFormPersist`):**
-   * Debounces keystrokes and saves the citizen's form inputs to encrypted `localStorage`. If the user refreshes, closes the tab, or drops internet connectivity, their draft is restored automatically.
+   * Debounces keystrokes and saves the citizen's form inputs to `sessionStorage` (tab-scoped, cleared on submit and logout; personal data never outlives the browser tab). If the user refreshes, closes the tab, or drops internet connectivity, their draft is restored automatically.
 7. **Citizen Privacy Dashboard (`ConsentPage.tsx`):**
    * Shows every active and historical data permission given by the citizen.
    * Includes a **1-Click "Revoke Access" button** that immediately terminates active query tokens.

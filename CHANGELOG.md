@@ -114,4 +114,29 @@ All changes, architectural additions, and autonomous build steps must be recorde
 1. Run `npm run dev` to launch the unified application (Backend on `:5000`, Frontend on `:3000`).
 2. Demonstrate live SIH judging scenarios using pre-seeded personas (Priya, Rajesh, Ananya) or the interactive Custom Citizen SSO login modal.
 
+---
+
+## [2026-10-26] — Session 4 (Reality audit: make every documented claim true)
+
+**Description**: Audited every claim in the docs against the code (see `IMPROVEMENT_PLAN.md` §1: 19 gaps, several critical) and rebuilt the security and integration core so the claims hold. The earlier "100% production verified" status was inaccurate: the backend did not compile, anyone could obtain a SYS_ADMIN token, consent tokens were not bound to the citizen, custom logins received fabricated government records, and the audit ledger was lost on restart.
+
+**Changes**:
+- **Build & supply chain**: backend compiles again; `src/app.ts` / `src/index.ts` split; express 4.22.3, mysql2 3.24.6, zod 4.6.7 (GHSA-mrhx-c7xc-m3w5), vitest 3, vite 6, Docker on Node 22 LTS; `npm audit --omit=dev` = 0; `uuid`, `winston` removed; helmet now used.
+- **Identity**: Meri Pehchaan / DigiLocker OAuth 2.0 + PKCE client (`oidc.ts`); HttpOnly SameSite=Strict session cookie (15 min sliding, 8 h cap, logout revocation); CSRF origin guard; demo login only in `DEMO_MODE`; Aadhaar Verhoeff validation; HMAC-peppered identity hashes.
+- **RBAC**: enforced on every route per SECURITY_ACCESS §1 (citizen / department officer / state admin), new DEPT-01 persona.
+- **Consent**: JOSE-compliant ES256, persistent key, `/.well-known/jwks.json`, server-derived scope, `sub`+journey binding, revocation persisted via ledger replay, scope-limited MGAS output.
+- **Audit**: persistent append-only JSONL ledger, canonical hashing incl. metadata, startup verification (fail closed), per-department `DATA_FETCH` blocks, citizen passbook `/audit/me`, receipt proof, NDJSON export.
+- **Adapters & workflow**: single fixture module; fixtures only in DEMO_MODE when a DB is offline; no fabricated records; column-level minimisation; timeouts + circuit breaker; identity-mismatch withholding; server-side form mapping; missing-record / expired-licence guidance; `POST /api/v1/applications` receipts; PostgreSQL LISTEN/NOTIFY live-ingest listener.
+- **Data & deployment**: seeder builds all spec schemas/indexes/validators and SELECT-only adapter accounts; `npm run demo:ingest` live-ingest command; compose stack with seed job, gateway, read-only CSV mount, localhost-bound DB ports, optional TLS 1.3 proxy; `npm run env:init` generates secrets.
+- **UI stub**: real login screen, shared i18n context (EN/MR/HI), role-based nav, fake OTP step removed, per-field provenance badges, confirmation for low-confidence records, real receipt + proof, privacy passbook, live admin metrics, self-hosted fonts, WCAG focus/labels/contrast fixes.
+- **Department Security Server (PRD F-21)**: `src/securityServer.ts` + `RemoteAdapter`: adapters can run inside a department network behind mutual TLS 1.3 (pinned CA, gateway CN) and verify each ES256 consent artifact themselves; `npm run certs:mtls` dev PKI; compose profile `mtls`. F-22 (HMAC request signing) marked superseded by mTLS.
+- **API Setu**: OpenAPI 3 description at `/openapi.json`, with a test that fails on undocumented routes.
+- **Tests**: 43 tests incl. HTTP-level security tests, a mock Meri Pehchaan IdP and a real-PKI mTLS suite; `scripts/diagnostics.ts` and on-disk `test:tamper` demo replace the old scripts.
+- **Verified on real engines** (PostgreSQL 18, MySQL 9.7, MongoDB 7 with auth): seeding, SELECT-only enforcement, live fetch from all four systems, live ingest + PostgreSQL CDC event, mTLS security server. Docker images/compose were not executed on the authoring machine (no Docker available).
+
+**NEXT AI SHOULD**:
+1. Read `IMPROVEMENT_PLAN.md` "Later" for the remaining infrastructure items (shared Redis state, external ledger witness, real Meri Pehchaan registration).
+2. First run of `npm run docker:up` on a Docker machine: confirm `/health` shows `source: live` for all adapters.
+3. Run `npm test` and `npm run diagnostics` before and after any change.
+
 

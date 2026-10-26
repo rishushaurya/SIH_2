@@ -12,7 +12,9 @@
     "certificates:historical_income:read"
   ],
   "default_validity_minutes": 15,
-  "statutory_basis": "MAHARASHTRA_RIGHT_TO_SERVICES_ACT_2015",
+  "statutory_basis": "MAHARASHTRA_RIGHT_TO_PUBLIC_SERVICES_ACT_2015",
+  "reference_prefix": "INC",
+  "rules": { "ews_income_limit_inr": 800000 },
   "form_fields": [
     { "key": "applicant_name", "label_en": "Applicant Full Name", "label_mr": "अर्जदाराचे पूर्ण नाव", "source": "identity" },
     { "key": "land_survey_number", "label_en": "7/12 Land Survey Number", "label_mr": "७/१२ गट / सर्व्हे नंबर", "source": "revenue" },

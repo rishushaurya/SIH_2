@@ -1,4 +1,7 @@
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'crypto';
+import { EventBroadcaster } from '../audit/eventBroadcaster';
+import { AuditBlock, auditLedger, sha256 } from '../audit/hashChain';
+import type { Journey } from '../workflow/journeys';
 import { ConsentCryptoSigner } from './cryptoSigner';
 
 export interface ConsentRecord {
@@ -8,125 +11,151 @@ export interface ConsentRecord {
   purpose: string;
   departments: string[];
   scope: string[];
+  statutory_basis: string;
   issued_at: number;
   expires_at: number;
   status: 'ACTIVE' | 'REVOKED' | 'EXPIRED';
   revocation_timestamp?: number;
-  token?: string;
 }
 
+export interface ConsentPayload {
+  jti: string;
+  iss: string;
+  sub: string;
+  aud: string[];
+  journey_id: string;
+  purpose: string;
+  scope: string[];
+  iat: number;
+  exp: number;
+  statutory_basis: string;
+  revocation_url: string;
+}
+
+const ISSUER = 'https://consent.mahalink.maharashtra.gov.in';
+
+export const allowsDepartment = (payload: ConsentPayload, department: string) => payload.aud.includes(`dept:${department}`);
+
+// DEPA consent manager. The registry is rebuilt from the persistent audit ledger at startup (restore),
+// so a revocation survives restarts exactly like the signing key does.
 export class ConsentManager {
-  private static consents: Map<string, ConsentRecord> = new Map();
-  private static revokedJtis: Set<string> = new Set();
+  private static consents = new Map<string, ConsentRecord>();
 
-  public static grantConsent(params: {
-    citizen_hash: string;
-    journey_id: string;
-    purpose: string;
-    departments: string[];
-    scope: string[];
-    validity_minutes?: number;
-  }): { jti: string; token: string; record: ConsentRecord } {
-    const jti = `urn:uuid:${uuidv4()}`;
+  // Departments, scope, purpose and validity come from the journey config, never from the client.
+  public static grantConsent(citizen_hash: string, journey: Journey): { jti: string; token: string; record: ConsentRecord } {
+    const jti = `urn:uuid:${randomUUID()}`;
     const now = Math.floor(Date.now() / 1000);
-    const validitySec = (params.validity_minutes || 15) * 60;
-    const expiresAt = now + validitySec;
+    const exp = now + journey.default_validity_minutes * 60;
 
-    const payload = {
+    const payload: ConsentPayload = {
       jti,
-      iss: 'https://consent.mahalink.maharashtra.gov.in',
-      sub: params.citizen_hash,
-      aud: params.departments.map((d) => `dept:${d}`),
-      purpose: params.purpose,
-      scope: params.scope,
+      iss: ISSUER,
+      sub: citizen_hash,
+      aud: journey.required_departments.map((d) => `dept:${d}`),
+      journey_id: journey.id,
+      purpose: journey.title_en,
+      scope: journey.consent_scope,
       iat: now,
-      exp: expiresAt,
-      statutory_basis: 'DPDP_ACT_2023_SEC_6',
+      exp,
+      statutory_basis: journey.statutory_basis,
       revocation_url: `/api/v1/consent/revoke/${jti}`,
     };
-
-    const token = ConsentCryptoSigner.signArtifact(payload);
+    const token = ConsentCryptoSigner.signArtifact({ ...payload });
 
     const record: ConsentRecord = {
       jti,
-      citizen_hash: params.citizen_hash,
-      journey_id: params.journey_id,
-      purpose: params.purpose,
-      departments: params.departments,
-      scope: params.scope,
+      citizen_hash,
+      journey_id: journey.id,
+      purpose: journey.title_en,
+      departments: journey.required_departments,
+      scope: journey.consent_scope,
+      statutory_basis: journey.statutory_basis,
       issued_at: now * 1000,
-      expires_at: expiresAt * 1000,
+      expires_at: exp * 1000,
       status: 'ACTIVE',
-      token,
     };
-
     this.consents.set(jti, record);
+
+    auditLedger.append({
+      actor_id: citizen_hash,
+      action: 'CONSENT_GRANT',
+      journey_id: journey.id,
+      purpose: journey.title_en,
+      consent_jti: jti,
+      payload_digest: sha256(token),
+      metadata: { consent: { ...record } }, // a copy: the live record mutates on revocation, the block must not
+    });
+    EventBroadcaster.emit(
+      'EVENT_CONSENT_MINT',
+      { jti, departments: record.departments, scope: record.scope, expires_in_minutes: journey.default_validity_minutes },
+      { subject: citizen_hash }
+    );
     return { jti, token, record };
   }
 
-  public static verifyConsent(token: string, requiredDept: string): { valid: boolean; payload?: any; error?: string } {
+  public static verifyConsent(
+    token: string,
+    expected: { citizen_hash: string; journey_id: string }
+  ): { valid: true; payload: ConsentPayload } | { valid: false; error: string } {
     const check = ConsentCryptoSigner.verifyArtifact(token);
-    if (!check.valid) {
-      return check;
+    if (!check.valid) return { valid: false, error: check.error! };
+
+    const payload = check.payload as ConsentPayload;
+    const record = this.consents.get(payload.jti);
+    if (!record) return { valid: false, error: 'Consent artifact is not registered with this consent manager.' };
+    if (record.status === 'REVOKED') return { valid: false, error: 'Consent token was explicitly REVOKED by citizen.' };
+    if (payload.sub !== expected.citizen_hash) return { valid: false, error: 'Consent artifact belongs to a different data principal.' };
+    if (payload.journey_id !== expected.journey_id) {
+      return { valid: false, error: 'Consent artifact was granted for a different purpose (journey).' };
     }
-
-    const { jti, aud } = check.payload;
-
-    if (this.revokedJtis.has(jti)) {
-      return { valid: false, error: 'Consent token was explicitly REVOKED by citizen.' };
-    }
-
-    const targetAudience = `dept:${requiredDept}`;
-    if (!aud || !aud.includes(targetAudience)) {
-      return {
-        valid: false,
-        error: `Consent token is not authorized for department: ${requiredDept}. Allowed: ${aud.join(', ')}`,
-      };
-    }
-
-    return { valid: true, payload: check.payload };
+    return { valid: true, payload };
   }
 
-  public static revokeConsent(jti: string, citizen_hash: string): { success: boolean; message: string } {
+  public static revokeConsent(jti: string, citizen_hash: string): { status: 200 | 403 | 404; message: string } {
     const record = this.consents.get(jti);
-    if (!record) {
-      // If not in local store, still add to revocation set for defense
-      this.revokedJtis.add(jti);
-      return { success: true, message: `Consent token ${jti} revoked.` };
-    }
-
-    if (record.citizen_hash !== citizen_hash) {
-      return { success: false, message: 'Unauthorized: Citizen hash mismatch for revocation.' };
-    }
+    if (!record) return { status: 404, message: `Consent artifact ${jti} not found.` };
+    if (record.citizen_hash !== citizen_hash) return { status: 403, message: 'Only the data principal can revoke this consent.' };
+    if (record.status === 'REVOKED') return { status: 200, message: `Consent artifact ${jti} was already revoked.` };
 
     record.status = 'REVOKED';
     record.revocation_timestamp = Date.now();
-    this.revokedJtis.add(jti);
-    this.consents.set(jti, record);
+    auditLedger.append({
+      actor_id: citizen_hash,
+      action: 'CONSENT_REVOKE',
+      journey_id: record.journey_id,
+      purpose: 'Citizen initiated consent withdrawal (DPDP Act 2023 s.6(4))',
+      consent_jti: jti,
+      payload_digest: 'REVOKED',
+    });
+    EventBroadcaster.emit('EVENT_CONSENT_REVOKE', { jti, departments: record.departments }, { subject: citizen_hash });
+    return { status: 200, message: `Consent artifact ${jti} successfully revoked.` };
+  }
 
-    return { success: true, message: `Consent artifact ${jti} successfully revoked.` };
+  public static getRecord(jti: string): ConsentRecord | undefined {
+    return this.consents.get(jti);
   }
 
   public static getCitizenConsents(citizen_hash: string): ConsentRecord[] {
-    const records: ConsentRecord[] = [];
     const now = Date.now();
+    return [...this.consents.values()]
+      .filter((r) => r.citizen_hash === citizen_hash)
+      .map((r) => (r.status === 'ACTIVE' && now > r.expires_at ? { ...r, status: 'EXPIRED' as const } : r))
+      .sort((a, b) => b.issued_at - a.issued_at);
+  }
 
-    for (const record of this.consents.values()) {
-      if (record.citizen_hash === citizen_hash) {
-        if (record.status === 'ACTIVE' && now > record.expires_at) {
-          record.status = 'EXPIRED';
-        }
-        // Strip sensitive raw JWT token from history payload
-        const { token, ...safeRecord } = record;
-        records.push(safeRecord as ConsentRecord);
+  public static restore(blocks: readonly AuditBlock[]): void {
+    for (const block of blocks) {
+      if (block.action === 'CONSENT_GRANT' && block.metadata?.consent) {
+        const record = block.metadata.consent as ConsentRecord;
+        this.consents.set(record.jti, { ...record });
+      } else if (block.action === 'CONSENT_REVOKE' && block.consent_jti) {
+        const record = this.consents.get(block.consent_jti);
+        if (record) Object.assign(record, { status: 'REVOKED', revocation_timestamp: Date.parse(block.timestamp) });
       }
     }
-
-    return records.sort((a, b) => b.issued_at - a.issued_at);
   }
 
   public static clear(): void {
     this.consents.clear();
-    this.revokedJtis.clear();
   }
 }

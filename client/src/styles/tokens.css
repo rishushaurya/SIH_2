@@ -7,6 +7,7 @@
 
   --gov-saffron: #FF6600;
   --gov-saffron-dark: #CC5200;
+  --gov-saffron-deep: #B34700; /* white text on this passes WCAG AA (5.5:1) */
   --gov-saffron-light: #FF8533;
   --gov-saffron-bg: #FFF3EB;
 

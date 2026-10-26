@@ -1,40 +1,58 @@
 import { Response } from 'express';
+import { SessionUser } from '../auth/jwt';
+
+export type InspectionEventType =
+  | 'EVENT_AUTH'
+  | 'EVENT_CONSENT_MINT'
+  | 'EVENT_CONSENT_REVOKE'
+  | 'EVENT_QUERY_DISPATCH'
+  | 'EVENT_IDENTITY_MATCH'
+  | 'EVENT_NORMALIZER'
+  | 'EVENT_AUDIT_MINED'
+  | 'EVENT_LIVE_INGEST';
 
 export interface InspectionEvent {
-  type: 'EVENT_AUTH' | 'EVENT_CONSENT_MINT' | 'EVENT_CONSENT_REVOKE' | 'EVENT_QUERY_DISPATCH' | 'EVENT_IDENTITY_MATCH' | 'EVENT_NORMALIZER' | 'EVENT_AUDIT_MINED';
+  type: InspectionEventType;
   timestamp: string;
-  data: Record<string, any>;
+  data: Record<string, unknown>;
 }
 
+interface Client {
+  res: Response;
+  user: SessionUser;
+}
+
+// Server-Sent Events for the Live Inspection Console. An event reaches the citizen it concerns (`subject`)
+// and administrators; `pii` fields (names) go only to that citizen.
 export class EventBroadcaster {
-  private static clients: Response[] = [];
+  private static clients = new Set<Client>();
 
-  public static addClient(res: Response): void {
-    this.clients.push(res);
+  // Keep idle connections open through proxies.
+  private static heartbeat = setInterval(() => {
+    for (const client of EventBroadcaster.clients) client.res.write(': keep-alive\n\n');
+  }, 25_000).unref();
+
+  public static addClient(res: Response, user: SessionUser): () => void {
+    const client = { res, user };
+    this.clients.add(client);
+    return () => this.clients.delete(client);
   }
 
-  public static removeClient(res: Response): void {
-    this.clients = this.clients.filter((client) => client !== res);
-  }
-
-  public static broadcast(event: InspectionEvent): void {
-    const payload = `data: ${JSON.stringify(event)}\n\n`;
-    this.clients.forEach((client) => {
+  public static emit(
+    type: InspectionEventType,
+    data: Record<string, unknown>,
+    scope: { subject?: string; pii?: Record<string, unknown> } = {}
+  ): void {
+    const timestamp = new Date().toISOString();
+    for (const client of this.clients) {
+      const isOwner = Boolean(scope.subject) && client.user.citizen_hash === scope.subject;
+      if (!isOwner && client.user.role === 'CITIZEN') continue;
+      const event: InspectionEvent = { type, timestamp, data: isOwner ? { ...data, ...scope.pii } : data };
       try {
-        client.write(payload);
-      } catch (err) {
-        // Drop disconnected client
-        this.removeClient(client);
+        client.res.write(`data: ${JSON.stringify(event)}\n\n`);
+      } catch {
+        this.clients.delete(client);
       }
-    });
-  }
-
-  public static emit(type: InspectionEvent['type'], data: Record<string, any>): void {
-    const event: InspectionEvent = {
-      type,
-      timestamp: new Date().toISOString(),
-      data,
-    };
-    this.broadcast(event);
+    }
   }
 }

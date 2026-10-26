@@ -1,3 +1,5 @@
+import type { RawDepartmentRecord } from '../../adapters/types';
+
 export interface NormalizedMGASPayload {
   citizen_profile: {
     full_name_english: string;
@@ -7,16 +9,13 @@ export interface NormalizedMGASPayload {
   revenue_land_records?: {
     survey_number: string;
     sub_division: string;
-    location: {
-      district: string;
-      taluka: string;
-      village: string;
-    };
+    location: { district: string; taluka: string; village: string };
     land_area_hectares: number;
     annual_assessment_tax_inr: number;
     encumbrances: string;
     last_mutation_no: string;
   };
+  verified_address?: { district: string; taluka: string; village: string };
   transport_records?: {
     driving_license?: {
       dl_number: string;
@@ -26,27 +25,11 @@ export interface NormalizedMGASPayload {
       rto_code: string;
       status: string;
     };
-    registered_vehicles: Array<{
-      registration_number: string;
-      make_model: string;
-      fuel_type: string;
-      chassis_number: string;
-      fitness_validity: string;
-    }>;
+    registered_vehicles?: Array<{ registration_number: string; make_model: string; fuel_type: string; fitness_validity: string }>;
   };
   certificate_records?: {
-    income_certificate?: {
-      certificate_id: string;
-      annual_income_inr: number;
-      issuing_authority: string;
-      valid_until: string;
-    };
-    caste_certificate?: {
-      certificate_id: string;
-      caste_category: string;
-      sub_caste?: string;
-      issuing_authority: string;
-    };
+    income_certificate?: { certificate_id: string; annual_income_inr: number; issuing_authority: string; valid_until: string };
+    caste_certificate?: { certificate_id: string; caste_category: string; sub_caste?: string; issuing_authority: string };
   };
   education_records?: {
     student_roll_no: string;
@@ -62,103 +45,115 @@ export interface NormalizedMGASPayload {
   };
 }
 
+const findCert = (data: any, key: 'financial_assessment' | 'caste_details') =>
+  (data?.certificates as any[] | undefined)?.find((c) => c.status !== 'REJECTED' && c[key]);
+
+// Name each department holds for this citizen, used by the identity resolver.
+export function departmentName(department: string, data: any): string | undefined {
+  switch (department) {
+    case 'revenue':
+      return data.owner_name_marathi || data.owner_name_english;
+    case 'rto':
+      return data.driving_license?.holder_name ?? data.vehicles?.[0]?.owner_name;
+    case 'certificates':
+      return data.certificates?.[0]?.applicant_details?.full_name_english;
+    case 'education':
+      return data.candidate_name_en;
+    default:
+      return undefined;
+  }
+}
+
+// Maps department records to MGAS, emitting only sections the consent scope covers (purpose limitation).
 export class MGASNormalizer {
   public static normalize(
     primaryCitizen: { full_name: string; aadhaar_hash: string },
-    rawDepartmentData: Record<string, any>
+    raw: Record<string, RawDepartmentRecord>,
+    scope: string[]
   ): NormalizedMGASPayload {
-    const sourcesVerified: string[] = [];
-
+    const has = (s: string) => scope.includes(s);
+    const sources = new Set<string>();
     const mgas: NormalizedMGASPayload = {
-      citizen_profile: {
-        full_name_english: primaryCitizen.full_name,
-        aadhaar_hash: primaryCitizen.aadhaar_hash,
-      },
-      verification_summary: {
-        sources_verified: sourcesVerified,
-        resolution_confidence_average: 0.98,
-        normalization_timestamp: new Date().toISOString(),
-      },
+      citizen_profile: { full_name_english: primaryCitizen.full_name, aadhaar_hash: primaryCitizen.aadhaar_hash },
+      verification_summary: { sources_verified: [], resolution_confidence_average: 0, normalization_timestamp: new Date().toISOString() },
     };
 
-    // 1. Revenue Department Normalization
-    if (rawDepartmentData.revenue?.data) {
-      const r = rawDepartmentData.revenue.data;
-      mgas.revenue_land_records = {
-        survey_number: r.survey_number || 'N/A',
-        sub_division: r.sub_division || '1',
-        location: {
-          district: r.district || 'Pune',
-          taluka: r.taluka || 'Haveli',
-          village: r.village || '',
-        },
-        land_area_hectares: parseFloat(r.land_area_hectares) || 0,
-        annual_assessment_tax_inr: parseFloat(r.assessment_tax_inr) || 0,
-        encumbrances: r.encumbrances || 'NIL',
-        last_mutation_no: r.last_mutation_no || '',
-      };
-      if (r.owner_name_marathi) {
-        mgas.citizen_profile.full_name_marathi = r.owner_name_marathi;
-      }
-      sourcesVerified.push('Revenue Department (Mahabhumi 7/12)');
-    }
-
-    // 2. RTO Transport Normalization
-    if (rawDepartmentData.rto?.data) {
-      const rto = rawDepartmentData.rto.data;
-      mgas.transport_records = {
-        driving_license: rto.driving_license
-          ? {
-              dl_number: rto.driving_license.dl_number,
-              holder_name: rto.driving_license.holder_name,
-              valid_until: rto.driving_license.expiry_date,
-              authorized_classes: rto.driving_license.vehicle_classes,
-              rto_code: rto.driving_license.rto_code,
-              status: rto.driving_license.status,
-            }
-          : undefined,
-        registered_vehicles: Array.isArray(rto.vehicles)
-          ? rto.vehicles.map((v: any) => ({
-              registration_number: v.registration_number,
-              make_model: v.vehicle_make_model,
-              fuel_type: v.fuel_type,
-              chassis_number: v.chassis_number,
-              fitness_validity: v.fitness_validity,
-            }))
-          : [],
-      };
-      sourcesVerified.push('Transport Department (Sarathi & Vahan)');
-    }
-
-    // 3. Certificates Normalization
-    if (rawDepartmentData.certificates?.data) {
-      const cert = rawDepartmentData.certificates.data;
-      mgas.certificate_records = {};
-
-      if (cert.certificate_type === 'INCOME_CERTIFICATE' && cert.financial_assessment) {
-        mgas.certificate_records.income_certificate = {
-          certificate_id: cert.certificate_id,
-          annual_income_inr: cert.financial_assessment.annual_income_inr,
-          issuing_authority: cert.financial_assessment.issuing_authority,
-          valid_until: cert.financial_assessment.valid_until,
+    const rev = raw.revenue?.data;
+    if (rev && (has('revenue:7_12:read') || has('revenue:residence_address:read'))) {
+      if (rev.owner_name_marathi) mgas.citizen_profile.full_name_marathi = rev.owner_name_marathi;
+      const location = { district: rev.district, taluka: rev.taluka, village: rev.village };
+      if (has('revenue:7_12:read')) {
+        mgas.revenue_land_records = {
+          survey_number: rev.survey_number,
+          sub_division: rev.sub_division,
+          location,
+          land_area_hectares: parseFloat(rev.land_area_hectares),
+          annual_assessment_tax_inr: parseFloat(rev.assessment_tax_inr),
+          encumbrances: rev.encumbrances || 'NIL',
+          last_mutation_no: rev.last_mutation_no,
         };
       }
-
-      if (cert.certificate_type === 'CASTE_CERTIFICATE' && cert.caste_details) {
-        mgas.certificate_records.caste_certificate = {
-          certificate_id: cert.certificate_id,
-          caste_category: cert.caste_details.caste_category,
-          sub_caste: cert.caste_details.sub_caste,
-          issuing_authority: cert.caste_details.issuing_authority,
-        };
-      }
-
-      sourcesVerified.push('Certificate Services (e-District MahaOnline)');
+      if (has('revenue:residence_address:read')) mgas.verified_address = location;
+      sources.add('Revenue Department (Mahabhumi 7/12)');
     }
 
-    // 4. Education Legacy CSV Normalization
-    if (rawDepartmentData.education?.data) {
-      const edu = rawDepartmentData.education.data;
+    const rto = raw.rto?.data;
+    if (rto) {
+      const transport: NonNullable<NormalizedMGASPayload['transport_records']> = {};
+      if (has('rto:driving_license:read') && rto.driving_license) {
+        const dl = rto.driving_license;
+        transport.driving_license = {
+          dl_number: dl.dl_number,
+          holder_name: dl.holder_name,
+          valid_until: dl.expiry_date,
+          authorized_classes: dl.vehicle_classes,
+          rto_code: dl.rto_code,
+          status: dl.status,
+        };
+      }
+      if (has('rto:vehicle_rc:read')) {
+        transport.registered_vehicles = (rto.vehicles || []).map((v: any) => ({
+          registration_number: v.registration_number,
+          make_model: v.vehicle_make_model,
+          fuel_type: v.fuel_type,
+          fitness_validity: v.fitness_validity,
+        }));
+      }
+      if (Object.keys(transport).length) {
+        mgas.transport_records = transport;
+        sources.add('Transport Department (Sarathi & Vahan)');
+      }
+    }
+
+    const certs = raw.certificates?.data;
+    if (certs) {
+      const records: NonNullable<NormalizedMGASPayload['certificate_records']> = {};
+      const income = findCert(certs, 'financial_assessment');
+      if (has('certificates:historical_income:read') && income) {
+        records.income_certificate = {
+          certificate_id: income.certificate_id,
+          annual_income_inr: Number(income.financial_assessment.annual_income_inr),
+          issuing_authority: income.financial_assessment.issuing_authority,
+          valid_until: income.financial_assessment.valid_until,
+        };
+      }
+      const caste = findCert(certs, 'caste_details');
+      if (has('certificates:caste_certificate:read') && caste) {
+        records.caste_certificate = {
+          certificate_id: caste.certificate_id,
+          caste_category: caste.caste_details.caste_category,
+          sub_caste: caste.caste_details.sub_caste,
+          issuing_authority: caste.caste_details.issuing_authority,
+        };
+      }
+      if (Object.keys(records).length) {
+        mgas.certificate_records = records;
+        sources.add('Certificate Services (e-District MahaOnline)');
+      }
+    }
+
+    const edu = raw.education?.data;
+    if (edu && has('education:marksheet:read')) {
       mgas.education_records = {
         student_roll_no: edu.student_roll_no,
         board_name: edu.board_name,
@@ -166,9 +161,10 @@ export class MGASNormalizer {
         percentage: edu.percentage,
         grade: edu.grade,
       };
-      sourcesVerified.push('Education Board (Legacy Records Stream)');
+      sources.add('Education Board (Legacy Records Stream)');
     }
 
+    mgas.verification_summary.sources_verified = [...sources];
     return mgas;
   }
 }

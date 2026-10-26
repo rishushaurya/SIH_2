@@ -159,7 +159,7 @@ Government databases suffer from structural data entropy. To link records safely
 ## 5. Security & Cryptographic Architecture
 
 ### 5.1 Mutual TLS (mTLS) Transport Security
-All internal inter-service traffic between the API Gateway and Federated Adapters operates over mTLS with 4096-bit RSA or ECDSA certificates signed by the MahaLink Internal CA. External callers without valid client certificates cannot reach adapter endpoints directly.
+When a department hosts its own adapter (Department Security Server mode, `src/securityServer.ts`, compose profile `mtls`), the gateway reaches it only over mutual TLS 1.3 with P-256 ECDSA certificates issued by the MahaLink interop CA (`npm run certs:mtls` for development; State PKI in production). The security server accepts only the gateway's client certificate (pinned CA + CN) and independently verifies each ES256 consent artifact against the published JWKS (audience = its department, subject = the requested citizen) before querying its database with a SELECT-only account. Adapters co-located with the gateway connect to department databases over optionally verified TLS (`PG_SSL`, `MYSQL_SSL`, `?tls=true`).
 
 ### 5.2 DEPA Consent Artifact Format
 Consent artifacts are structured as tamper-proof JSON Web Tokens (JWT) signed via ECDSA (Curve P-256 with SHA-256):

@@ -1,116 +1,103 @@
-import crypto from 'crypto';
-import { Request, Response } from 'express';
-import { signAuthToken } from './jwt';
+import { httpError } from '../../gateway/errorHandler';
+import { hashIdentity, isValidAadhaar, maskAadhaar } from './identity';
+import { Role, SessionUser } from './jwt';
 
-// Pre-seeded demo citizen profiles matching our deterministic seed database
-export const DEMO_PERSONAS = [
+// Demo-only identities (DEMO_MODE=true). Hashes anchor the seeded department records in src/db/fixtures.ts.
+// Real citizens sign in through Meri Pehchaan (oidc.ts).
+export const DEMO_PERSONAS: Array<{
+  id: string;
+  full_name: string;
+  aadhaar_last4: string;
+  aadhaar_hash: string;
+  district: string;
+  role: Role;
+  department_id?: string;
+  scenario: string;
+}> = [
   {
     id: 'P-01',
     full_name: 'Priya Ramesh Sharma',
-    aadhaar_raw: '9988-1234-5678',
+    aadhaar_last4: '5678',
     aadhaar_hash: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
-    mobile: '+91 98230 11223',
     district: 'Pune',
-    role: 'CITIZEN' as const,
+    role: 'CITIZEN',
+    scenario: 'Devanagari vs English name, abbreviated middle name',
   },
   {
     id: 'P-02',
     full_name: 'Rajesh Ganpat Pawar',
-    aadhaar_raw: '8877-2345-6789',
+    aadhaar_last4: '6789',
     aadhaar_hash: '9f83c120a1098bcf98a729e1082cba983b749019283746192837461928374619',
-    mobile: '+91 94220 33445',
-    district: 'Baramati',
-    role: 'CITIZEN' as const,
+    district: 'Pune',
+    role: 'CITIZEN',
+    scenario: 'Surname-first Marathi record, OBC caste certificate',
   },
   {
     id: 'P-03',
     full_name: 'Ananya Vijay Deshmukh',
-    aadhaar_raw: '7766-3456-7890',
+    aadhaar_last4: '7890',
     aadhaar_hash: 'a81b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b',
-    mobile: '+91 98221 55667',
     district: 'Nashik',
-    role: 'CITIZEN' as const,
+    role: 'CITIZEN',
+    scenario: 'Scholarship: HSC marksheet + caste + family income',
+  },
+  {
+    id: 'P-04',
+    full_name: 'Sunil Baban Jadhav',
+    aadhaar_last4: '9012',
+    aadhaar_hash: 'b72c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c',
+    district: 'Satara',
+    role: 'CITIZEN',
+    scenario: 'Expired driving licence, no board record (missing-document guidance)',
+  },
+  {
+    id: 'DEPT-01',
+    full_name: 'Smt. Meera Kulkarni (Revenue Desk Officer)',
+    aadhaar_last4: '3344',
+    aadhaar_hash: 'd4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5',
+    district: 'Pune',
+    role: 'DEPT_ADMIN',
+    department_id: 'revenue',
+    scenario: 'Department officer: sees only Revenue audit entries',
   },
   {
     id: 'ADMIN-01',
     full_name: 'Dr. Sanjay Kolhe (Maha-IT Lead)',
-    aadhaar_raw: '1122-3344-5566',
+    aadhaar_last4: '5566',
     aadhaar_hash: 'c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2',
-    mobile: '+91 99000 11111',
     district: 'Mumbai',
-    role: 'SYS_ADMIN' as const,
+    role: 'SYS_ADMIN',
+    scenario: 'State Data Authority: full audit ledger and export',
   },
 ];
 
-export interface CitizenProfile {
-  id: string;
-  full_name: string;
-  aadhaar_raw: string;
-  aadhaar_hash: string;
-  mobile?: string;
-  district?: string;
-  role: 'CITIZEN' | 'DEPT_ADMIN' | 'SYS_ADMIN';
-}
+export const publicPersonas = () =>
+  DEMO_PERSONAS.map(({ aadhaar_hash: _hash, aadhaar_last4, ...p }) => ({ ...p, masked_id: `XXXX-XXXX-${aadhaar_last4}` }));
 
-export const CUSTOM_CITIZEN_REGISTRY = new Map<string, CitizenProfile>();
-
-export function getCitizenByHash(aadhaarHash: string): CitizenProfile | undefined {
-  const staticFound = DEMO_PERSONAS.find((p) => p.aadhaar_hash === aadhaarHash);
-  if (staticFound) return staticFound;
-  return CUSTOM_CITIZEN_REGISTRY.get(aadhaarHash);
-}
-
-export function hashAadhaar(rawAadhaar: string): string {
-  // Deterministic salt for test demonstration
-  return crypto.createHash('sha256').update(rawAadhaar.replace(/[^0-9]/g, '') + '_mahalink_salt_2026').digest('hex');
-}
-
-export function handleSSOLogin(req: Request, res: Response) {
-  const { persona_id, custom_name, custom_aadhaar, district, role } = req.body;
-
-  let selectedPersona: CitizenProfile;
-
-  if (persona_id) {
-    const found = DEMO_PERSONAS.find((p) => p.id === persona_id);
-    if (!found) {
-      return res.status(404).json({ error: 'PERSONA_NOT_FOUND', message: `Demo persona ${persona_id} not found.` });
-    }
-    selectedPersona = found;
-  } else if (custom_aadhaar && custom_name) {
-    const rawClean = custom_aadhaar.trim();
-    const computedHash = hashAadhaar(rawClean);
-    selectedPersona = {
-      id: `CUSTOM-${computedHash.slice(0, 6).toUpperCase()}`,
-      full_name: custom_name.trim(),
-      aadhaar_raw: rawClean.length === 12 ? `${rawClean.slice(0, 4)}-${rawClean.slice(4, 8)}-${rawClean.slice(8, 12)}` : rawClean,
-      aadhaar_hash: computedHash,
-      district: district || 'Pune',
-      role: role || 'CITIZEN',
+export function demoLogin(input: { persona_id?: string; full_name?: string; aadhaar?: string }): SessionUser {
+  if (input.persona_id) {
+    const persona = DEMO_PERSONAS.find((p) => p.id === input.persona_id);
+    if (!persona) throw httpError(404, 'PERSONA_NOT_FOUND', `Demo persona ${input.persona_id} not found.`);
+    return {
+      citizen_hash: persona.aadhaar_hash,
+      full_name: persona.full_name,
+      role: persona.role,
+      department_id: persona.department_id,
+      masked_id: `XXXX-XXXX-${persona.aadhaar_last4}`,
+      auth_provider: 'Demo SSO (DEMO_MODE)',
     };
-    CUSTOM_CITIZEN_REGISTRY.set(computedHash, selectedPersona);
-  } else {
-    // Default to Persona 1 (Priya Sharma) in demo mode
-    selectedPersona = DEMO_PERSONAS[0];
   }
 
-  const token = signAuthToken({
-    citizen_hash: selectedPersona.aadhaar_hash,
-    full_name: selectedPersona.full_name,
-    role: selectedPersona.role,
-  });
-
-  return res.status(200).json({
-    status: 'AUTHENTICATED',
-    auth_provider: 'Meri Pehchaan (National SSO Bridge)',
-    token,
-    user: {
-      id: selectedPersona.id,
-      full_name: selectedPersona.full_name,
-      aadhaar_hash: selectedPersona.aadhaar_hash,
-      masked_aadhaar: `XXXX-XXXX-${selectedPersona.aadhaar_raw.slice(-4)}`,
-      role: selectedPersona.role,
-      district: selectedPersona.district || 'Maharashtra',
-    },
-  });
+  const aadhaar = (input.aadhaar || '').replace(/\D/g, '');
+  if (!isValidAadhaar(aadhaar)) {
+    throw httpError(400, 'INVALID_AADHAAR', 'Aadhaar must be 12 digits, not start with 0 or 1, and pass the Verhoeff checksum.');
+  }
+  // Custom demo logins are always citizens; roles can never be self-assigned.
+  return {
+    citizen_hash: hashIdentity(aadhaar, 'aadhaar'),
+    full_name: input.full_name!.trim(),
+    role: 'CITIZEN',
+    masked_id: maskAadhaar(aadhaar),
+    auth_provider: 'Demo SSO (DEMO_MODE)',
+  };
 }
-

@@ -12,6 +12,7 @@
   ],
   "default_validity_minutes": 15,
   "statutory_basis": "MOTOR_VEHICLES_ACT_1988_SEC_15",
+  "reference_prefix": "DL",
   "form_fields": [
     { "key": "applicant_name", "label_en": "License Holder Name", "label_mr": "परवानाधारकाचे नाव", "source": "identity" },
     { "key": "dl_number", "label_en": "Current DL Number", "label_mr": "चालक परवाना क्रमांक", "source": "rto" },

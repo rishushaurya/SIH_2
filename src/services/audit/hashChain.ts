@@ -1,157 +1,144 @@
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
+import { env } from '../../config/env';
+
+export type AuditAction =
+  | 'SYSTEM_INIT'
+  | 'CONSENT_GRANT'
+  | 'CONSENT_REVOKE'
+  | 'DATA_FETCH'
+  | 'WORKFLOW_EXECUTE'
+  | 'FORM_SUBMIT';
 
 export interface AuditEntryData {
   actor_id: string;
-  action: 'CONSENT_GRANT' | 'CONSENT_REVOKE' | 'DATA_FETCH' | 'WORKFLOW_EXECUTE' | 'IDENTITY_MATCH' | 'FORM_SUBMIT';
+  action: AuditAction;
   department?: string;
   journey_id?: string;
   purpose: string;
   consent_jti?: string;
   payload_digest: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
 }
 
-export interface AuditBlock {
+export interface AuditBlock extends AuditEntryData {
   index: number;
   timestamp: string;
-  actor_id: string;
-  action: string;
-  department?: string;
-  journey_id?: string;
-  purpose: string;
-  consent_jti?: string;
-  payload_digest: string;
-  metadata?: Record<string, any>;
   prev_hash: string;
   block_hash: string;
 }
 
+// Deterministic JSON (sorted keys) so every field, including nested metadata, is covered by the hash.
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value)
+      .filter((k) => (value as any)[k] !== undefined)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${canonical((value as any)[k])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+export const sha256 = (data: string) => crypto.createHash('sha256').update(data).digest('hex');
+export const digestOf = (value: unknown) => sha256(canonical(value));
+
+const hashBlock = ({ block_hash: _ignored, ...rest }: AuditBlock) => sha256(canonical(rest));
+
+const GENESIS: AuditBlock = {
+  index: 0,
+  timestamp: '2026-09-01T00:00:00.000Z',
+  actor_id: 'SYSTEM_GENESIS',
+  action: 'SYSTEM_INIT',
+  purpose: 'MahaLink State Interoperability Genesis Node',
+  payload_digest: 'GENESIS_PAYLOAD_DIGEST',
+  prev_hash: '0'.repeat(64),
+  block_hash: '',
+};
+GENESIS.block_hash = hashBlock(GENESIS);
+
+// Append-only JSONL ledger (DPDP Rules 2025 r.6: access logs retained for at least one year).
+// seniordev: single-writer file; for several gateway instances use a Postgres table with UPDATE/DELETE revoked.
 export class HashChainLedger {
-  private static instance: HashChainLedger;
   private blocks: AuditBlock[] = [];
 
-  private constructor() {
-    this.createGenesisBlock();
-  }
-
-  public static getInstance(): HashChainLedger {
-    if (!HashChainLedger.instance) {
-      HashChainLedger.instance = new HashChainLedger();
+  constructor(private readonly filePath = '') {
+    if (filePath && fs.existsSync(filePath)) {
+      this.blocks = fs
+        .readFileSync(filePath, 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map((line, i) => {
+          try {
+            return JSON.parse(line) as AuditBlock;
+          } catch {
+            throw new Error(`Audit ledger ${filePath} is corrupted at line ${i + 1}.`);
+          }
+        });
     }
-    return HashChainLedger.instance;
+    if (this.blocks.length === 0) this.persist({ ...GENESIS });
   }
 
-  private createGenesisBlock(): void {
-    const genesisData: AuditBlock = {
-      index: 0,
-      timestamp: '2026-09-01T00:00:00.000Z',
-      actor_id: 'SYSTEM_GENESIS',
-      action: 'SYSTEM_INIT',
-      purpose: 'MahaLink State Interoperability Genesis Node',
-      payload_digest: 'GENESIS_PAYLOAD_DIGEST',
-      prev_hash: '0'.repeat(64),
-      block_hash: '',
-    };
-    genesisData.block_hash = this.calculateBlockHash(genesisData);
-    this.blocks.push(genesisData);
-  }
-
-  private calculateBlockHash(block: Omit<AuditBlock, 'block_hash'>): string {
-    const serialized = [
-      block.index,
-      block.timestamp,
-      block.actor_id,
-      block.action,
-      block.department || 'GLOBAL',
-      block.journey_id || 'NONE',
-      block.purpose,
-      block.consent_jti || 'NO_TOKEN',
-      block.payload_digest,
-      block.prev_hash,
-    ].join('|');
-
-    return crypto.createHash('sha256').update(serialized).digest('hex');
+  private persist(block: AuditBlock): void {
+    if (this.filePath) {
+      fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
+      fs.appendFileSync(this.filePath, `${JSON.stringify(block)}\n`);
+    }
+    this.blocks.push(block);
   }
 
   public append(data: AuditEntryData): AuditBlock {
-    const prevBlock = this.blocks[this.blocks.length - 1];
-    const newIndex = prevBlock.index + 1;
-    const timestamp = new Date().toISOString();
-
-    const blockDraft: Omit<AuditBlock, 'block_hash'> = {
-      index: newIndex,
-      timestamp,
-      actor_id: data.actor_id,
-      action: data.action,
-      department: data.department,
-      journey_id: data.journey_id,
-      purpose: data.purpose,
-      consent_jti: data.consent_jti,
-      payload_digest: data.payload_digest,
-      metadata: data.metadata,
-      prev_hash: prevBlock.block_hash,
+    const prev = this.blocks[this.blocks.length - 1];
+    const block: AuditBlock = {
+      ...data,
+      index: prev.index + 1,
+      timestamp: new Date().toISOString(),
+      prev_hash: prev.block_hash,
+      block_hash: '',
     };
-
-    const block_hash = this.calculateBlockHash(blockDraft);
-    const completedBlock: AuditBlock = { ...blockDraft, block_hash };
-
-    this.blocks.push(completedBlock);
-    return completedBlock;
+    block.block_hash = hashBlock(block);
+    this.persist(block);
+    return block;
   }
 
-  public verifyChainIntegrity(): {
-    isValid: boolean;
-    totalBlocks: number;
-    corruptedBlockIndex?: number;
-    message: string;
-  } {
-    for (let i = 1; i < this.blocks.length; i++) {
-      const current = this.blocks[i];
-      const previous = this.blocks[i - 1];
-
-      // 1. Verify previous hash pointer
-      if (current.prev_hash !== previous.block_hash) {
-        return {
-          isValid: false,
-          totalBlocks: this.blocks.length,
-          corruptedBlockIndex: i,
-          message: `Broken link at block #${i}: prev_hash does not match previous block_hash.`,
-        };
+  public verifyChainIntegrity(): { isValid: boolean; totalBlocks: number; corruptedBlockIndex?: number; message: string } {
+    const totalBlocks = this.blocks.length;
+    for (let i = 0; i < totalBlocks; i++) {
+      const block = this.blocks[i];
+      const expectedPrev = i === 0 ? GENESIS.prev_hash : this.blocks[i - 1].block_hash;
+      if (block.index !== i || block.prev_hash !== expectedPrev) {
+        return { isValid: false, totalBlocks, corruptedBlockIndex: i, message: `Broken link at block #${i}: chain pointer or index mismatch.` };
       }
-
-      // 2. Recompute and verify current block hash
-      const recomputedHash = this.calculateBlockHash(current);
-      if (current.block_hash !== recomputedHash) {
-        return {
-          isValid: false,
-          totalBlocks: this.blocks.length,
-          corruptedBlockIndex: i,
-          message: `Tampered content at block #${i}: internal digest does not match block_hash.`,
-        };
+      if (hashBlock(block) !== block.block_hash) {
+        return { isValid: false, totalBlocks, corruptedBlockIndex: i, message: `Tampered content at block #${i}: recomputed hash does not match.` };
       }
     }
-
-    return {
-      isValid: true,
-      totalBlocks: this.blocks.length,
-      message: `Audit chain intact. Verified ${this.blocks.length} blocks with zero tampering detected.`,
-    };
+    return { isValid: true, totalBlocks, message: `Audit chain intact. Verified ${totalBlocks} blocks with zero tampering detected.` };
   }
 
-  public getBlocks(limit: number = 50): AuditBlock[] {
-    return this.blocks.slice(-limit).reverse();
+  // Newest first.
+  public getBlocks(limit = 50, filter: (b: AuditBlock) => boolean = () => true): AuditBlock[] {
+    return this.blocks.filter(filter).slice(-limit).reverse();
+  }
+
+  public allBlocks(): readonly AuditBlock[] {
+    return this.blocks;
+  }
+
+  public findByHash(blockHash: string): AuditBlock | undefined {
+    return this.blocks.find((b) => b.block_hash === blockHash);
   }
 
   public getBlockCount(): number {
     return this.blocks.length;
   }
 
-  // Artificial tamper method for security demonstration testing
+  // In-memory tamper for demonstrations and tests; the file on disk is untouched.
   public tamperBlockForTest(index: number, newDigest: string): void {
-    if (this.blocks[index]) {
-      this.blocks[index].payload_digest = newDigest;
-    }
+    if (this.blocks[index]) this.blocks[index].payload_digest = newDigest;
   }
 }
 
-export const auditLedger = HashChainLedger.getInstance();
+export const auditLedger = new HashChainLedger(env.AUDIT_LOG_PATH);

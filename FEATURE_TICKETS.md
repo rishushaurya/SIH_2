@@ -92,6 +92,6 @@
 - **Description:** Build the citizen-facing web application using React, Vite, and native CSS variables modeled strictly on the official Government of Maharashtra aesthetic (Ashoka emblem, Navy `#003366`, Saffron `#FF6600`, official typography). Includes trilingual toggle (English / मराठी / हिंदी) and dynamic auto-filling form wizard.
 - **Acceptance Criteria:**
   1. 4 UI States for every asynchronous data element: Loading (content-shaped skeleton), Success (verified data + source badge), Error (informative retry banner), Empty (call-to-action).
-  2. Form persistence: Saves input state to encrypted `localStorage` on every keystroke, restoring seamlessly after browser reload or network interruption.
+  2. Form persistence: Saves input state to `sessionStorage` (tab-scoped, cleared on submit and logout; personal data never outlives the browser tab), restoring seamlessly after browser reload or network interruption.
   3. Zero emojis in the UI; utilizes accessible Lucide SVG icons exclusively.
   4. Responsive across mobile (360px) to desktop (1920px) screens.

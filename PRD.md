@@ -86,8 +86,8 @@ Maharashtra operates the Aaple Sarkar portal offering 500+ services as a front-e
 | F-18 | Trilingual Localization | Full English, Marathi (मराठी), and Hindi (हिंदी) string localization | P1 | Chunk 06 |
 | F-19 | Deterministic Demo Engine | Self-contained, zero-external-dependency mode populated with 10+ edge-case citizen personas | P1 | Chunk 01, 08 |
 | F-20 | Live Ingestion Mode | Real-time database write listener allowing live data entry and immediate middleware fetching | P1 | Chunk 08 |
-| F-21 | Service-to-Service mTLS | Mutual TLS enforcement for adapter-to-gateway transport security | P2 | Chunk 05 |
-| F-22 | Cryptographic Request Signing | HMAC-SHA256 request header signing preventing transit modification | P2 | Chunk 05 |
+| F-21 | Service-to-Service mTLS | Department Security Server mode: adapters inside department networks, mutual TLS 1.3 with the gateway, independent consent verification (`src/securityServer.ts`) | P2 | Chunk 05 |
+| F-22 | Cryptographic Request Signing | Superseded by F-21: mTLS 1.3 already gives mutual authentication and transit integrity, and every department request carries an ES256-signed consent artifact | P2 | Chunk 05 |
 | F-23 | Multi-Journey Engine | JSON configuration parser supporting arbitrary multi-department citizen service flows | P2 | Chunk 04 |
 | F-24 | Department Admin Console | Scrutiny dashboard for department officers to view consent utilization and metrics | P2 | Chunk 07 |
 | F-25 | Containerized Cloud Deploy | Production-ready multi-stage Docker Compose and deployment manifests for Cloud Run/Railway | P2 | Chunk 09 |
@@ -109,7 +109,7 @@ Maharashtra operates the Aaple Sarkar portal offering 500+ services as a front-e
 
 ### 6.3 Accessibility & Usability
 - **WCAG 2.1 Level AA Compliance:** High-contrast color ratios, full keyboard navigable forms, screen-reader semantic markup.
-- **Graceful Error Recovery:** Client forms must persist state across network drops or backend 500 errors via encrypted local session storage.
+- **Graceful Error Recovery:** Client forms must persist state across network drops or backend 500 errors via tab-scoped session storage (cleared on submit and logout).
 
 ---
 

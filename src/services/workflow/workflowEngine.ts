@@ -1,228 +1,177 @@
-import crypto from 'crypto';
-import fs from 'fs';
-import path from 'path';
-import { certificateAdapter } from '../../adapters/certificateAdapter';
-import { educationAdapter } from '../../adapters/educationAdapter';
-import { revenueAdapter } from '../../adapters/revenueAdapter';
-import { rtoAdapter } from '../../adapters/rtoAdapter';
+import { departmentAdapters } from '../../adapters/registry';
+import { DataSource, RawDepartmentRecord } from '../../adapters/types';
+import { httpError } from '../../gateway/errorHandler';
+import { log } from '../../gateway/logger';
 import { EventBroadcaster } from '../audit/eventBroadcaster';
-import { auditLedger } from '../audit/hashChain';
-import { ConsentManager } from '../consent/consentManager';
-import { MGASNormalizer, NormalizedMGASPayload } from '../normalizer/mgasNormalizer';
+import { auditLedger, digestOf } from '../audit/hashChain';
+import { allowsDepartment, ConsentManager } from '../consent/consentManager';
+import { mapFormValues } from '../normalizer/formMapper';
+import { departmentName, MGASNormalizer, NormalizedMGASPayload } from '../normalizer/mgasNormalizer';
 import { IdentityResolver } from '../resolver/identityResolver';
-import { MissingDocDetector, MissingDocumentAlert } from '../rules/missingDocDetector';
+import { DepartmentStatus, MissingDocDetector, MissingDocumentAlert } from '../rules/missingDocDetector';
+import { getJourney } from './journeys';
+
+export interface DepartmentResult {
+  department: string;
+  status: DepartmentStatus;
+  confidence?: number;
+  source?: DataSource;
+  verified_source?: string;
+  duration_ms: number;
+}
 
 export interface WorkflowExecutionResult {
   journey_id: string;
-  citizen_profile: {
-    full_name: string;
-    aadhaar_hash: string;
-  };
   consent_jti: string;
   mgas_data: NormalizedMGASPayload;
+  form_values: Record<string, string>;
+  department_status: DepartmentResult[];
   missing_documents: MissingDocumentAlert[];
-  audit_block: {
-    index: number;
-    block_hash: string;
-    timestamp: string;
-  };
-  execution_metrics: {
-    total_duration_ms: number;
-    departments_queried: string[];
-    resolver_matches: Array<{
-      department: string;
-      confidence: number;
-      flag: string;
-    }>;
-  };
+  audit_block: { index: number; block_hash: string; timestamp: string };
+  execution_metrics: { total_duration_ms: number; departments_queried: string[] };
 }
 
+const ADAPTER_TIMEOUT_MS = 3000;
+const BREAKER_THRESHOLD = 5;
+const BREAKER_WINDOW_MS = 30_000;
+const BREAKER_OPEN_MS = 30_000;
+
+// Circuit breaker per department (TAD §6.2): 5 failures in 30 s opens it for 30 s.
+// seniordev: per-process state; share it (Redis) if several gateway instances must trip together.
+const breakers = new Map<string, { failures: number[]; openUntil: number }>();
+
+async function queryDepartment(department: string, citizenHash: string, consentToken: string): Promise<RawDepartmentRecord | null | 'UNAVAILABLE'> {
+  const breaker = breakers.get(department) ?? { failures: [], openUntil: 0 };
+  breakers.set(department, breaker);
+  const now = Date.now();
+  if (now < breaker.openUntil) return 'UNAVAILABLE';
+
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    const record = await Promise.race([
+      departmentAdapters[department].queryCitizenRecord(citizenHash, consentToken),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`timed out after ${ADAPTER_TIMEOUT_MS} ms`)), ADAPTER_TIMEOUT_MS);
+      }),
+    ]);
+    breaker.failures = [];
+    return record;
+  } catch (err: any) {
+    breaker.failures = [...breaker.failures.filter((t) => now - t < BREAKER_WINDOW_MS), now];
+    if (breaker.failures.length >= BREAKER_THRESHOLD) breaker.openUntil = now + BREAKER_OPEN_MS;
+    log('WARN', 'department adapter unavailable', { department, error: err.message, circuit_open: now < breaker.openUntil });
+    return 'UNAVAILABLE';
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+const STATUS_BY_FLAG = {
+  AUTO_RESOLVED: 'VERIFIED',
+  VERIFICATION_REQUIRED: 'VERIFICATION_REQUIRED',
+  MISMATCH: 'IDENTITY_MISMATCH',
+} as const;
+
 export class WorkflowEngine {
-  private static journeysMap: Map<string, any> = new Map();
-
-  public static initialize(): void {
-    if (this.journeysMap.size > 0) return;
-
-    const possibleDirs = [
-      path.resolve(process.cwd(), 'src/services/workflow/journeyConfigs'),
-      path.resolve(process.cwd(), 'dist/services/workflow/journeyConfigs'),
-    ];
-
-    let foundDir = possibleDirs.find((d) => fs.existsSync(d));
-
-    if (foundDir) {
-      const files = fs.readdirSync(foundDir);
-      files.forEach((file) => {
-        if (file.endsWith('.json')) {
-          try {
-            const content = JSON.parse(fs.readFileSync(path.join(foundDir!, file), 'utf8'));
-            this.journeysMap.set(content.id, content);
-          } catch {
-            // continue
-          }
-        }
-      });
-    }
-  }
-
-  public static getJourneys(): any[] {
-    this.initialize();
-    return Array.from(this.journeysMap.values());
-  }
-
-  public static getJourney(id: string): any {
-    this.initialize();
-    return this.journeysMap.get(id);
-  }
-
   public static async executeJourney(params: {
     journey_id: string;
     citizen: { full_name: string; aadhaar_hash: string };
     consent_token: string;
   }): Promise<WorkflowExecutionResult> {
-    this.initialize();
     const startTime = Date.now();
+    const journey = getJourney(params.journey_id);
+    if (!journey) throw httpError(404, 'WORKFLOW_NOT_FOUND', `Journey ${params.journey_id} is not registered.`);
 
-    const journey = this.journeysMap.get(params.journey_id);
-    if (!journey) {
-      throw new Error(`Journey ${params.journey_id} is not registered in the workflow engine.`);
-    }
+    // 1. Verify DEPA consent: signature, expiry, revocation, data principal and purpose.
+    const subject = params.citizen.aadhaar_hash;
+    const check = ConsentManager.verifyConsent(params.consent_token, { citizen_hash: subject, journey_id: journey.id });
+    if (!check.valid) throw httpError(403, 'CONSENT_INVALID', `DEPA Consent Verification Failed: ${check.error}`);
+    const consent = check.payload;
+    const departments = journey.required_departments.filter((d) => allowsDepartment(consent, d));
 
-    // 1. Verify DEPA Consent Token
-    const requiredDepts: string[] = journey.required_departments;
-    for (const dept of requiredDepts) {
-      const check = ConsentManager.verifyConsent(params.consent_token, dept);
-      if (!check.valid) {
-        throw new Error(`DEPA Consent Verification Failed for department '${dept}': ${check.error}`);
-      }
-    }
+    EventBroadcaster.emit('EVENT_QUERY_DISPATCH', { journey_id: journey.id, departments, consent_jti: consent.jti }, { subject });
 
-    EventBroadcaster.emit('EVENT_QUERY_DISPATCH', {
-      journey_id: params.journey_id,
-      departments: requiredDepts,
-      citizen_hash: params.citizen.aadhaar_hash.slice(0, 12) + '...',
-    });
+    // 2. Parallel, fail-soft department queries.
+    const outcomes = await Promise.all(
+      departments.map(async (department) => {
+        const t0 = Date.now();
+        const outcome = await queryDepartment(department, subject, params.consent_token);
+        return { department, outcome, duration_ms: Date.now() - t0 };
+      })
+    );
 
-    // 2. Dispatch Parallel Queries to Department Adapters
-    const queryPromises = requiredDepts.map(async (dept) => {
-      const t0 = Date.now();
-      let record = null;
-      if (dept === 'revenue') {
-        record = await revenueAdapter.queryCitizenRecord(params.citizen.aadhaar_hash, params.consent_token);
-      } else if (dept === 'rto') {
-        record = await rtoAdapter.queryCitizenRecord(params.citizen.aadhaar_hash, params.consent_token);
-      } else if (dept === 'certificates') {
-        record = await certificateAdapter.queryCitizenRecord(params.citizen.aadhaar_hash, params.consent_token);
-      } else if (dept === 'education') {
-        record = await educationAdapter.queryCitizenRecord(params.citizen.aadhaar_hash, params.consent_token);
-      }
-      return { dept, record, duration_ms: Date.now() - t0 };
-    });
+    // 3. Identity resolution; mismatched records are withheld, never auto-filled.
+    const accepted: Record<string, RawDepartmentRecord> = {};
+    const statuses: Record<string, DepartmentStatus> = {};
+    const departmentStatus: DepartmentResult[] = [];
 
-    const queryResults = await Promise.all(queryPromises);
-    const rawDeptData: Record<string, any> = {};
-    const resolverMatches: Array<{ department: string; confidence: number; flag: string }> = [];
+    for (const { department, outcome, duration_ms } of outcomes) {
+      const record = outcome === 'UNAVAILABLE' ? null : outcome;
+      let status: DepartmentStatus = outcome === 'UNAVAILABLE' ? 'UNAVAILABLE' : 'NOT_FOUND';
+      let confidence: number | undefined;
 
-    // 3. Identity Resolution & Verification across raw department responses
-    queryResults.forEach(({ dept, record, duration_ms }) => {
-      if (record && record.data) {
-        rawDeptData[dept] = record;
-
-        // Extract name for cross-check
-        let candidateName = params.citizen.full_name;
-        if (dept === 'revenue' && record.data.owner_name_marathi) {
-          candidateName = record.data.owner_name_marathi;
-        } else if (dept === 'rto' && record.data.driving_license?.holder_name) {
-          candidateName = record.data.driving_license.holder_name;
-        } else if (dept === 'certificates' && record.data.applicant_details?.full_name_english) {
-          candidateName = record.data.applicant_details.full_name_english;
-        } else if (dept === 'education' && record.data.candidate_name_en) {
-          candidateName = record.data.candidate_name_en;
-        }
-
-        const matchResult = IdentityResolver.resolve(params.citizen, {
-          department: dept,
-          source_name: candidateName,
+      if (record) {
+        const sourceName = departmentName(department, record.data) ?? '';
+        const match = IdentityResolver.resolve(params.citizen, {
+          department,
+          source_name: sourceName,
           source_aadhaar_hash: record.aadhaar_hash,
         });
-
-        resolverMatches.push({
-          department: dept,
-          confidence: matchResult.confidenceScore,
-          flag: matchResult.flag,
-        });
-
-        EventBroadcaster.emit('EVENT_IDENTITY_MATCH', {
-          department: dept,
-          candidate_name: candidateName,
-          primary_name: params.citizen.full_name,
-          confidence: matchResult.confidenceScore,
-          flag: matchResult.flag,
-          duration_ms,
-        });
+        confidence = match.confidenceScore;
+        status = STATUS_BY_FLAG[match.flag];
+        if (status !== 'IDENTITY_MISMATCH') accepted[department] = record;
+        EventBroadcaster.emit(
+          'EVENT_IDENTITY_MATCH',
+          { department, confidence, flag: match.flag, duration_ms, source: record.source },
+          { subject, pii: { candidate_name: sourceName, primary_name: params.citizen.full_name } }
+        );
       }
-    });
 
-    // 4. MGAS Canonical Data Normalization
-    const normalizedData = MGASNormalizer.normalize(params.citizen, rawDeptData);
+      statuses[department] = status;
+      departmentStatus.push({ department, status, confidence, source: record?.source, verified_source: record?.verified_source, duration_ms });
 
-    EventBroadcaster.emit('EVENT_NORMALIZER', {
-      journey_id: params.journey_id,
-      sources_verified: normalizedData.verification_summary.sources_verified,
-    });
+      // Every access attempt is logged, including misses and outages (DPDP Rules 2025 r.6).
+      auditLedger.append({
+        actor_id: subject,
+        action: 'DATA_FETCH',
+        department,
+        journey_id: journey.id,
+        purpose: journey.title_en,
+        consent_jti: consent.jti,
+        payload_digest: record ? digestOf(record.data) : status,
+        metadata: { status, source: record?.source },
+      });
+    }
 
-    // 5. Missing Documents Rule Evaluation
-    const missingDocs = MissingDocDetector.evaluate(params.journey_id, rawDeptData);
+    // 4. MGAS normalisation limited to the consented scope.
+    const mgas = MGASNormalizer.normalize(params.citizen, accepted, consent.scope);
+    const confidences = departmentStatus.flatMap((d) => (d.confidence === undefined ? [] : [d.confidence]));
+    mgas.verification_summary.resolution_confidence_average = confidences.length
+      ? Math.round((confidences.reduce((a, b) => a + b, 0) / confidences.length) * 1000) / 1000
+      : 0;
+    EventBroadcaster.emit('EVENT_NORMALIZER', { journey_id: journey.id, sources_verified: mgas.verification_summary.sources_verified }, { subject });
 
-    // 6. Cryptographic Audit Ledger Entry Mining (SHA-256 Hash Chain)
-    const confidenceAvg = resolverMatches.length > 0
-      ? Math.round((resolverMatches.reduce((sum, m) => sum + m.confidence, 0) / resolverMatches.length) * 1000) / 1000
-      : 1.0;
-
-    normalizedData.verification_summary.resolution_confidence_average = confidenceAvg;
-
-    const payloadDigest = crypto.createHash('sha256').update(JSON.stringify(normalizedData)).digest('hex');
-
-    const auditBlock = auditLedger.append({
-      actor_id: params.citizen.aadhaar_hash,
+    // 5. Hash-chained proof of the whole exchange.
+    const block = auditLedger.append({
+      actor_id: subject,
       action: 'WORKFLOW_EXECUTE',
-      journey_id: params.journey_id,
+      journey_id: journey.id,
       purpose: journey.title_en,
-      consent_jti: 'DEPA_CONSENT_VALIDATED',
-      payload_digest: payloadDigest,
-      metadata: {
-        sources_verified: normalizedData.verification_summary.sources_verified,
-        resolver_confidence_avg: confidenceAvg,
-      },
+      consent_jti: consent.jti,
+      payload_digest: digestOf(mgas),
+      metadata: { statuses },
     });
-
-    EventBroadcaster.emit('EVENT_AUDIT_MINED', {
-      block_index: auditBlock.index,
-      block_hash: auditBlock.block_hash,
-      prev_hash: auditBlock.prev_hash,
-    });
-
-    const totalDuration = Date.now() - startTime;
+    EventBroadcaster.emit('EVENT_AUDIT_MINED', { block_index: block.index, block_hash: block.block_hash, prev_hash: block.prev_hash }, { subject });
 
     return {
-      journey_id: params.journey_id,
-      citizen_profile: {
-        full_name: params.citizen.full_name,
-        aadhaar_hash: params.citizen.aadhaar_hash,
-      },
-      consent_jti: 'DEPA_CONSENT_VALIDATED',
-      mgas_data: normalizedData,
-      missing_documents: missingDocs,
-      audit_block: {
-        index: auditBlock.index,
-        block_hash: auditBlock.block_hash,
-        timestamp: auditBlock.timestamp,
-      },
-      execution_metrics: {
-        total_duration_ms: totalDuration,
-        departments_queried: requiredDepts,
-        resolver_matches: resolverMatches,
-      },
+      journey_id: journey.id,
+      consent_jti: consent.jti,
+      mgas_data: mgas,
+      form_values: mapFormValues(journey, mgas),
+      department_status: departmentStatus,
+      missing_documents: MissingDocDetector.evaluate(journey.id, statuses, mgas),
+      audit_block: { index: block.index, block_hash: block.block_hash, timestamp: block.timestamp },
+      execution_metrics: { total_duration_ms: Date.now() - startTime, departments_queried: departments },
     };
   }
 }

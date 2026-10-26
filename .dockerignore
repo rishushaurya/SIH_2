@@ -5,3 +5,9 @@ client/dist
 .git
 .env
 *.log
+data
+nginx/certs
+test
+*.md
+client/node_modules
+certs

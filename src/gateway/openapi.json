@@ -1,0 +1,243 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "MahaLink Interoperability & Consent Middleware",
+    "version": "2.0.0",
+    "description": "Federated gateway for Maharashtra department systems (SIH26129). Citizens authenticate with Meri Pehchaan; every department read requires a DEPA consent artifact (ES256 JWT, keys at /.well-known/jwks.json) and is recorded in a SHA-256 hash-chained audit ledger. Browser clients use the HttpOnly session cookie; server-to-server integrators may send the same session JWT as a Bearer token.",
+    "contact": { "name": "MahaLink (SIH26129, Team INFERNO VI)" }
+  },
+  "servers": [{ "url": "/" }],
+  "tags": [
+    { "name": "Health & keys" },
+    { "name": "Authentication" },
+    { "name": "Workflows" },
+    { "name": "Consent" },
+    { "name": "Audit" },
+    { "name": "Inspection" }
+  ],
+  "components": {
+    "securitySchemes": {
+      "session": { "type": "apiKey", "in": "cookie", "name": "mahalink_session" },
+      "bearer": { "type": "http", "scheme": "bearer", "bearerFormat": "JWT" }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": { "error": { "type": "string" }, "message": { "type": "string" }, "request_id": { "type": "string" } }
+      },
+      "SessionUser": {
+        "type": "object",
+        "properties": {
+          "full_name": { "type": "string" },
+          "role": { "type": "string", "enum": ["CITIZEN", "DEPT_ADMIN", "SYS_ADMIN"] },
+          "department_id": { "type": "string" },
+          "masked_id": { "type": "string", "example": "XXXX-XXXX-5678" },
+          "auth_provider": { "type": "string" }
+        }
+      },
+      "ConsentRecord": {
+        "type": "object",
+        "properties": {
+          "jti": { "type": "string" },
+          "journey_id": { "type": "string" },
+          "purpose": { "type": "string" },
+          "departments": { "type": "array", "items": { "type": "string" } },
+          "scope": { "type": "array", "items": { "type": "string" } },
+          "statutory_basis": { "type": "string" },
+          "issued_at": { "type": "integer" },
+          "expires_at": { "type": "integer" },
+          "status": { "type": "string", "enum": ["ACTIVE", "REVOKED", "EXPIRED"] }
+        }
+      },
+      "AuditBlock": {
+        "type": "object",
+        "properties": {
+          "index": { "type": "integer" },
+          "timestamp": { "type": "string", "format": "date-time" },
+          "action": { "type": "string", "enum": ["SYSTEM_INIT", "CONSENT_GRANT", "CONSENT_REVOKE", "DATA_FETCH", "WORKFLOW_EXECUTE", "FORM_SUBMIT"] },
+          "department": { "type": "string" },
+          "journey_id": { "type": "string" },
+          "purpose": { "type": "string" },
+          "consent_jti": { "type": "string" },
+          "prev_hash": { "type": "string" },
+          "block_hash": { "type": "string" }
+        }
+      }
+    },
+    "responses": {
+      "Unauthorized": { "description": "No valid session", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "Forbidden": { "description": "Role, consent or CSRF check failed", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+    }
+  },
+  "security": [{ "session": [] }, { "bearer": [] }],
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": ["Health & keys"],
+        "summary": "Adapter connectivity (live or demo fixture) and audit-chain integrity",
+        "security": [],
+        "responses": { "200": { "description": "Healthy" }, "503": { "description": "A department system is down or the ledger failed verification" } }
+      }
+    },
+    "/.well-known/jwks.json": {
+      "get": {
+        "tags": ["Health & keys"],
+        "summary": "Consent Authority public keys (RFC 7517) so departments can verify consent artifacts themselves",
+        "security": [],
+        "responses": { "200": { "description": "JWK Set" } }
+      }
+    },
+    "/openapi.json": {
+      "get": { "tags": ["Health & keys"], "summary": "This OpenAPI description (for API Setu listing)", "security": [], "responses": { "200": { "description": "OpenAPI 3 document" } } }
+    },
+    "/api/v1/auth/config": {
+      "get": { "tags": ["Authentication"], "summary": "Which login methods are enabled", "security": [], "responses": { "200": { "description": "demo_mode and Meri Pehchaan availability" } } }
+    },
+    "/api/v1/auth/personas": {
+      "get": { "tags": ["Authentication"], "summary": "Demo personas (DEMO_MODE only, masked identifiers)", "security": [], "responses": { "200": { "description": "Persona list" }, "404": { "description": "Demo mode disabled" } } }
+    },
+    "/api/v1/auth/sso/login": {
+      "post": {
+        "tags": ["Authentication"],
+        "summary": "Demo sign-in with a persona or a Verhoeff-valid Aadhaar (DEMO_MODE only)",
+        "security": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": { "persona_id": { "type": "string" }, "full_name": { "type": "string" }, "aadhaar": { "type": "string" } }
+              }
+            }
+          }
+        },
+        "responses": { "200": { "description": "Session cookie set" }, "400": { "description": "Invalid Aadhaar" }, "404": { "description": "Demo mode disabled" } }
+      }
+    },
+    "/api/v1/auth/oidc/start": {
+      "get": { "tags": ["Authentication"], "summary": "Begin Meri Pehchaan OAuth 2.0 + PKCE login", "security": [], "responses": { "302": { "description": "Redirect to the identity provider" } } }
+    },
+    "/api/v1/auth/oidc/callback": {
+      "get": {
+        "tags": ["Authentication"],
+        "summary": "Authorization-code callback: verifies state, PKCE and the ID token, then sets the session cookie",
+        "security": [],
+        "parameters": [
+          { "name": "code", "in": "query", "schema": { "type": "string" } },
+          { "name": "state", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": { "302": { "description": "Redirect to the portal" } }
+      }
+    },
+    "/api/v1/auth/session": {
+      "get": {
+        "tags": ["Authentication"],
+        "summary": "Current session",
+        "responses": { "200": { "description": "Signed-in user", "content": { "application/json": { "schema": { "type": "object", "properties": { "user": { "$ref": "#/components/schemas/SessionUser" } } } } } }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": { "tags": ["Authentication"], "summary": "Revoke the session server-side", "responses": { "200": { "description": "Logged out" } } }
+    },
+    "/api/v1/workflows": {
+      "get": { "tags": ["Workflows"], "summary": "Service catalogue (journey configurations)", "responses": { "200": { "description": "Journeys" }, "401": { "$ref": "#/components/responses/Unauthorized" } } }
+    },
+    "/api/v1/workflows/{id}": {
+      "get": {
+        "tags": ["Workflows"],
+        "summary": "One journey: departments, consent scope, form fields",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Journey" }, "404": { "description": "Unknown journey" } }
+      }
+    },
+    "/api/v1/workflows/{id}/execute": {
+      "post": {
+        "tags": ["Workflows"],
+        "summary": "Federated fetch under a consent artifact: identity resolution, MGAS normalisation, form-ready values, audit blocks",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "required": ["consent_token"], "properties": { "consent_token": { "type": "string" } } } } }
+        },
+        "responses": { "200": { "description": "mgas_data, form_values, department_status, missing_documents, audit_block" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
+    "/api/v1/applications": {
+      "post": {
+        "tags": ["Workflows"],
+        "summary": "Submit an application; MahaLink records only a digest and returns an audit-backed receipt",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["journey_id", "form_values"],
+                "properties": {
+                  "journey_id": { "type": "string" },
+                  "consent_jti": { "type": "string" },
+                  "form_values": { "type": "object", "additionalProperties": { "type": "string" } }
+                }
+              }
+            }
+          }
+        },
+        "responses": { "201": { "description": "Reference and audit block" }, "400": { "description": "Unknown form fields" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
+    "/api/v1/consent/grant": {
+      "post": {
+        "tags": ["Consent"],
+        "summary": "Mint a DEPA consent artifact; scope and departments come from the journey configuration",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "type": "object", "required": ["journey_id"], "properties": { "journey_id": { "type": "string" } } } } }
+        },
+        "responses": { "200": { "description": "consent_token (ES256 JWT) and record" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
+    "/api/v1/consent/revoke/{jti}": {
+      "post": {
+        "tags": ["Consent"],
+        "summary": "Withdraw consent (DPDP Act 2023 s.6(4)); immediate and audit-logged",
+        "parameters": [{ "name": "jti", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": { "200": { "description": "Revoked" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "description": "Unknown consent" } }
+      }
+    },
+    "/api/v1/consent/history": {
+      "get": {
+        "tags": ["Consent"],
+        "summary": "The citizen's consent artifacts",
+        "responses": { "200": { "description": "Consents", "content": { "application/json": { "schema": { "type": "object", "properties": { "consents": { "type": "array", "items": { "$ref": "#/components/schemas/ConsentRecord" } } } } } } } }
+      }
+    },
+    "/api/v1/audit/me": {
+      "get": { "tags": ["Audit"], "summary": "Citizen privacy passbook: every access to the caller's data (DPDP Act 2023 s.11)", "responses": { "200": { "description": "Entries" } } }
+    },
+    "/api/v1/audit/ledger": {
+      "get": {
+        "tags": ["Audit"],
+        "summary": "Ledger blocks (SYS_ADMIN all, DEPT_ADMIN own department)",
+        "parameters": [{ "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 500 } }],
+        "responses": { "200": { "description": "Blocks", "content": { "application/json": { "schema": { "type": "object", "properties": { "blocks": { "type": "array", "items": { "$ref": "#/components/schemas/AuditBlock" } } } } } } }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
+    "/api/v1/audit/export": {
+      "get": { "tags": ["Audit"], "summary": "Full ledger as NDJSON for regulators (SYS_ADMIN)", "responses": { "200": { "description": "application/x-ndjson" }, "403": { "$ref": "#/components/responses/Forbidden" } } }
+    },
+    "/api/v1/audit/verify": {
+      "post": { "tags": ["Audit"], "summary": "Recompute the whole SHA-256 chain", "responses": { "200": { "description": "isValid, totalBlocks, corruptedBlockIndex" } } }
+    },
+    "/api/v1/audit/proof/{hash}": {
+      "get": {
+        "tags": ["Audit"],
+        "summary": "Is this receipt's block hash part of an intact chain?",
+        "parameters": [{ "name": "hash", "in": "path", "required": true, "schema": { "type": "string", "pattern": "^[a-f0-9]{64}$" } }],
+        "responses": { "200": { "description": "found, chain_intact, block" }, "400": { "description": "Malformed hash" } }
+      }
+    },
+    "/api/v1/events/stream": {
+      "get": { "tags": ["Inspection"], "summary": "Server-Sent Events for the Live Inspection Console (per-citizen filtered)", "responses": { "200": { "description": "text/event-stream" }, "401": { "$ref": "#/components/responses/Unauthorized" } } }
+    }
+  }
+}

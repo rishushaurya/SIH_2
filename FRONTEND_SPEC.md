@@ -83,9 +83,9 @@ Skeleton loaders must precisely mimic the dimensions of incoming data blocks to 
 
 To guarantee that citizens never lose form input due to network instability, browser crashes, or server errors:
 
-1. **Storage Mechanism:** On every keystroke, form state is debounced by 300ms and saved to browser `localStorage` using a key hashed with the active citizen ID and journey ID: `mahalink_form_${citizenId}_${journeyId}`.
-2. **Restoration Protocol:** When the form mounts, the hook inspects `localStorage`. If saved state exists and is younger than 24 hours, the form auto-restores with a notification: *"Draft restored from your last session."*
-3. **Pristine Cleansing:** Upon successful submission receipt (`200 OK`), the cache key is immediately cleared from `localStorage`.
+1. **Storage Mechanism:** On every change, form state is saved to browser `sessionStorage` under `mahalink_draft_${maskedId}_${journeyId}`. Session storage is tab-scoped, so personal data never outlives the browser tab; logout clears it.
+2. **Restoration Protocol:** When the form mounts, the hook inspects `sessionStorage` and restores any draft (reloads and network errors do not lose input).
+3. **Pristine Cleansing:** Upon successful submission receipt (`200 OK`), the draft key is immediately cleared from `sessionStorage`.
 
 ---
 

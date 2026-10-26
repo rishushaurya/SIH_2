@@ -1,43 +1,37 @@
-# Stage 1: Build Frontend and Backend
-FROM node:20-alpine AS builder
-
+# Stage 1: build backend (tsc) and the integration-stub UI (Vite)
+FROM node:22-alpine AS builder
 WORKDIR /app
 
-# Copy root dependencies and build backend
-COPY package*.json tsconfig.json ./
-RUN npm ci
-
-COPY src/ ./src/
-COPY scripts/ ./scripts/
-RUN npx tsc -b
-
-# Copy client dependencies and build frontend bundle
-COPY client/package*.json ./client/
-RUN cd client && npm ci
-
-COPY client/ ./client/
-RUN cd client && npm run build
-
-# Stage 2: Production Runner Image
-FROM node:20-alpine AS runner
-
-WORKDIR /app
-ENV NODE_ENV=production
-ENV PORT=5000
-
-# Install production dependencies only
 COPY package*.json ./
-RUN npm ci --only=production
+RUN npm ci
+COPY client/package*.json ./client/
+RUN npm --prefix client ci
 
-# Copy compiled backend and frontend dist
+COPY tsconfig.json ./
+COPY src ./src
+COPY client ./client
+RUN npx tsc -p tsconfig.json && npm --prefix client run build
+
+# Stage 2: minimal runtime, production dependencies only, non-root
+FROM node:22-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production \
+    PORT=5000 \
+    CSV_DATA_DIR=/app/dist/db/files \
+    AUDIT_LOG_PATH=/app/data/audit-ledger.jsonl \
+    CONSENT_KEY_FILE=/app/data/consent-signing-key.pem
+
+COPY package*.json ./
+RUN npm ci --omit=dev && npm cache clean --force
+
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/client/dist ./client/dist
-COPY --from=builder /app/src/db/files ./dist/db/files
-COPY --from=builder /app/src/services/workflow/journeyConfigs ./dist/services/workflow/journeyConfigs
+COPY src/db/files ./dist/db/files
+COPY src/services/workflow/journeyConfigs ./dist/services/workflow/journeyConfigs
+RUN mkdir -p /app/data && chown node:node /app/data
 
-# Run as unprivileged non-root user
 USER node
-
 EXPOSE 5000
-
+HEALTHCHECK --interval=15s --timeout=5s --start-period=20s \
+  CMD node -e "fetch('http://127.0.0.1:5000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 CMD ["node", "dist/index.js"]
